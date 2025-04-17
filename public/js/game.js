@@ -1571,9 +1571,6 @@ function handleOfflineDeath() {
     player.score = 0;
 }
 
-// Time-based animation for smoother gameplay
-let lastUpdateTime = 0;
-
 // Main game loop - remove AI snake updates
 function animate(now) {
     requestAnimationFrame(animate);

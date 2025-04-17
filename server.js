@@ -30,6 +30,9 @@ const PERFORMANCE = {
 const app = express();
 const server = http.createServer(app);
 
+// Memory usage tracking
+const initialMemory = process.memoryUsage();
+
 // Configure CORS for all domains
 app.use(cors({
     origin: '*',
@@ -70,10 +73,8 @@ const actionCount = {};
 const playerActivity = {};
 
 // Create initial food
-for (let i = 0; i < FOOD_COUNT; i++) {
-    generateFood();
-}
-console.log(`Generated ${FOOD_COUNT} food items`);
+generateFood(FOOD_COUNT);
+console.log(`Generated ${food.length} food items`);
 
 // Start the server
 server.listen(PORT, () => {
