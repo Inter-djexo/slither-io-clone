@@ -51,6 +51,43 @@ const SNAKE_SPEED = 3;
 const SEGMENT_SPACING = 5;
 const MAX_SEGMENTS = 100;
 
+// Add a flag to track if we're in offline mode
+let offlineMode = false;
+
+// Add the original checkFoodCollisions function here before overriding it
+// Check for collisions with food
+function checkFoodCollisions() {
+    if (player.segments.length === 0) return;
+    
+    const headX = player.segments[0].x;
+    const headY = player.segments[0].y;
+    
+    for (let i = foodItems.length - 1; i >= 0; i--) {
+        const food = foodItems[i];
+        const distance = Math.sqrt(Math.pow(headX - food.x, 2) + Math.pow(headY - food.y, 2));
+        
+        if (distance < SEGMENT_SIZE + FOOD_SIZE) {
+            // Eat food
+            player.size += 1;
+            updateScore();
+            
+            // Add new segment if needed
+            if (player.segments.length < MAX_SEGMENTS) {
+                addSegment();
+            }
+            
+            // Tell server about eaten food
+            if (!offlineMode) {
+                socket.emit('eatFood', food.id);
+            }
+            
+            // Remove food locally
+            scene.remove(food.mesh);
+            foodItems.splice(i, 1);
+        }
+    }
+}
+
 // Initialize the game
 function init() {
     try {
@@ -431,18 +468,25 @@ function connectToServer() {
         // Check if io is available
         if (typeof io === 'undefined') {
             console.error("Socket.io is not loaded!");
-            alert("Could not load Socket.io library. Please refresh the page and try again.");
+            enableOfflineMode("Could not load Socket.io library.");
             return;
         }
         
+        // Add a timeout to hide the loading screen if connection takes too long
+        const connectionTimeout = setTimeout(() => {
+            enableOfflineMode("Connection to server timed out.");
+        }, 15000); // 15 seconds timeout
+        
         // Determine server URL based on environment (local vs production)
         const isProduction = window.location.hostname.indexOf('netlify.app') !== -1 || 
-                            window.location.hostname.indexOf('firebase') !== -1;
+                            window.location.hostname.indexOf('onrender.com') !== -1;
         
         // Use the appropriate server URL based on environment
         const serverUrl = isProduction 
-            ? 'https://slither-io-clone.onrender.com'  // Your Render.com backend URL
-            : window.location.hostname + ':48765';   // Local development URL  // Local development URL
+            ? (window.location.hostname.indexOf('onrender.com') !== -1 
+               ? window.location.origin  // If we're on Render, use the same origin
+               : 'https://slither-io-clone.onrender.com')  // Otherwise use the Render URL
+            : window.location.hostname + ':48765';   // Local development URL
         
         console.log(`Connecting to socket server at: ${serverUrl}`);
         
@@ -456,13 +500,15 @@ function connectToServer() {
         // When connected to server
         socket.on('connect', () => {
             console.log('Connected to server successfully');
+            clearTimeout(connectionTimeout); // Clear the timeout on successful connection
             document.getElementById('loading-screen').style.display = 'none';
         });
         
         // Handle connection error
         socket.on('connect_error', (error) => {
             console.error('Socket.io connection error:', error);
-            alert('Error connecting to game server. Please refresh the page and try again.');
+            enableOfflineMode("Could not connect to game server.");
+            clearTimeout(connectionTimeout);
         });
         
         // Receive initial game state
@@ -524,8 +570,60 @@ function connectToServer() {
         });
     } catch (error) {
         console.error('Error initializing Socket.io:', error);
-        alert('Error initializing game. Please refresh the page and try again.');
+        enableOfflineMode("Error initializing game connection.");
     }
+}
+
+// Enable offline mode with a fallback experience
+function enableOfflineMode(reason) {
+    offlineMode = true;
+    console.log("Enabling offline mode:", reason);
+    
+    // Hide loading screen
+    document.getElementById('loading-screen').style.display = 'none';
+    
+    // Show a brief notice to the user
+    const offlineNotice = document.createElement('div');
+    offlineNotice.className = 'offline-notice';
+    offlineNotice.innerHTML = `
+        <div class="offline-content">
+            <i class="fas fa-wifi-slash"></i>
+            <p>Playing in offline mode: ${reason}</p>
+            <button id="offline-continue">Continue</button>
+        </div>
+    `;
+    document.body.appendChild(offlineNotice);
+    
+    // When they click continue, remove the notice and start offline mode
+    document.getElementById('offline-continue').addEventListener('click', () => {
+        offlineNotice.style.display = 'none';
+        startOfflineMode();
+    });
+}
+
+// Start a simplified offline game mode
+function startOfflineMode() {
+    // Create player snake
+    createPlayerSnake();
+    
+    // Generate some food for the offline experience
+    for (let i = 0; i < 200; i++) {
+        const foodId = 'offline-food-' + i;
+        const x = (Math.random() * 2 - 1) * worldSize / 2;
+        const y = (Math.random() * 2 - 1) * worldSize / 2;
+        const food = {
+            id: foodId,
+            x: x,
+            y: y,
+            size: FOOD_SIZE,
+            color: '#' + Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0')
+        };
+        createFood(food);
+    }
+    
+    // Enable controls
+    controlsEnabled = true;
+    gameStarted = true;
 }
 
 // Create the player's snake with improved visuals
@@ -898,36 +996,50 @@ function updateLeaderboard() {
     }
 }
 
-// Check for collisions with food
-function checkFoodCollisions() {
-    if (player.segments.length === 0) return;
-    
-    const headX = player.segments[0].x;
-    const headY = player.segments[0].y;
-    
-    for (let i = foodItems.length - 1; i >= 0; i--) {
-        const food = foodItems[i];
-        const distance = Math.sqrt(Math.pow(headX - food.x, 2) + Math.pow(headY - food.y, 2));
+// Override the checkFoodCollisions function for offline mode
+const originalCheckFoodCollisions = checkFoodCollisions;
+checkFoodCollisions = function() {
+    if (offlineMode) {
+        // In offline mode, handle collisions locally
+        if (player.segments.length === 0) return;
         
-        if (distance < SEGMENT_SIZE + FOOD_SIZE) {
-            // Eat food
-            player.size += 1;
-            updateScore();
+        const head = player.segments[0];
+        const headRadius = SEGMENT_SIZE;
+        
+        for (let i = 0; i < foodItems.length; i++) {
+            const food = foodItems[i];
+            const dx = head.x - food.x;
+            const dy = head.y - food.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
             
-            // Add new segment if needed
-            if (player.segments.length < MAX_SEGMENTS) {
+            if (distance < headRadius + FOOD_SIZE) {
+                // Remove the food
+                scene.remove(food.mesh);
+                foodItems.splice(i, 1);
+                i--;
+                
+                // Add segment to player
                 addSegment();
+                
+                // Generate new food
+                const foodId = 'offline-food-' + Math.random().toString(36).substr(2, 9);
+                const x = (Math.random() * 2 - 1) * worldSize / 2;
+                const y = (Math.random() * 2 - 1) * worldSize / 2;
+                const newFood = {
+                    id: foodId,
+                    x: x,
+                    y: y,
+                    size: FOOD_SIZE,
+                    color: '#' + Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0')
+                };
+                createFood(newFood);
             }
-            
-            // Tell server about eaten food
-            socket.emit('eatFood', food.id);
-            
-            // Remove food locally
-            scene.remove(food.mesh);
-            foodItems.splice(i, 1);
         }
+    } else {
+        // Online mode, use the original function
+        originalCheckFoodCollisions.call(this);
     }
-}
+};
 
 // Check for collisions with other players
 function checkPlayerCollisions() {
