@@ -683,13 +683,13 @@ function enableOfflineMode(reason) {
 
 // Start a simplified offline game mode
 function startOfflineMode() {
-    console.log("Starting offline mode");
+    console.log("Starting offline mode (single player)");
     
     // Create player snake
     createPlayerSnake();
     
     // Generate some food for the offline experience - reduced amount for better performance
-    const foodCount = 100; // Reduced from 200
+    const foodCount = 150; // Increased from 100 since we have no AI snakes
     for (let i = 0; i < foodCount; i++) {
         const foodId = 'offline-food-' + i;
         const x = (Math.random() * 2 - 1) * worldSize / 2;
@@ -704,11 +704,8 @@ function startOfflineMode() {
         createFood(food);
     }
     
-    // Create a few AI snakes for the offline experience
-    const aiCount = 3;
-    for (let i = 0; i < aiCount; i++) {
-        createAISnake();
-    }
+    // Clear any existing AI snakes from previous games
+    clearAISnakes();
     
     // Enable controls
     controlsEnabled = true;
@@ -719,6 +716,29 @@ function startOfflineMode() {
     
     // Update leaderboard for offline mode
     updateLeaderboardOffline();
+}
+
+// Clear any existing AI snakes
+function clearAISnakes() {
+    for (const id in otherPlayers) {
+        if (id.startsWith('ai-')) {
+            removeOtherPlayer(id);
+        }
+    }
+}
+
+// Add offline-specific leaderboard updates - simplified with only player
+function updateLeaderboardOffline() {
+    // Clear current list
+    leadersList.innerHTML = '';
+    
+    // Create a single-item leaderboard with just the player
+    const li = document.createElement('li');
+    li.innerHTML = `<span>${player.name || 'You'}</span><span>${player.size}</span>`;
+    li.style.color = '#00ff00';
+    li.style.fontWeight = 'bold';
+    
+    leadersList.appendChild(li);
 }
 
 // For offline mode - optimized food collision detection
@@ -904,50 +924,6 @@ function updateAISnakes() {
     }
 }
 
-// Add offline-specific leaderboard updates
-function updateLeaderboardOffline() {
-    // Clear current list
-    leadersList.innerHTML = '';
-    
-    // Build leaderboard data
-    const leaders = [];
-    
-    // Add local player
-    leaders.push({
-        name: player.name || 'You',
-        score: player.size,
-        isLocal: true
-    });
-    
-    // Add AI players
-    for (const id in otherPlayers) {
-        if (id.startsWith('ai-')) {
-            leaders.push({
-                name: otherPlayers[id].name,
-                score: otherPlayers[id].size,
-                isLocal: false
-            });
-        }
-    }
-    
-    // Sort by score (descending)
-    leaders.sort((a, b) => b.score - a.score);
-    
-    // Display top 10
-    const topLeaders = leaders.slice(0, 10);
-    for (const leader of topLeaders) {
-        const li = document.createElement('li');
-        li.innerHTML = `<span>${leader.name}</span><span>${leader.score}</span>`;
-        
-        if (leader.isLocal) {
-            li.style.color = '#00ff00';
-            li.style.fontWeight = 'bold';
-        }
-        
-        leadersList.appendChild(li);
-    }
-}
-
 // Check collision with AI snakes in offline mode
 function checkAICollisions() {
     if (player.segments.length === 0) return;
@@ -1060,7 +1036,7 @@ function handleOfflineDeath() {
 // Time-based animation for smoother gameplay
 let lastUpdateTime = 0;
 
-// Main game loop
+// Main game loop - remove AI snake updates
 function animate(now) {
     requestAnimationFrame(animate);
     
@@ -1081,14 +1057,10 @@ function animate(now) {
     
     if (gameStarted && controlsEnabled) {
         if (offlineMode) {
-            // Optimized offline mode updates
+            // Optimized offline mode updates - no AI snakes
             updatePlayerOffline(deltaTime);
             checkFoodCollisionsOffline();
             checkBoundaryOffline();
-            
-            // Update AI snakes
-            updateAISnakes();
-            checkAICollisions();
             
             // Less frequent updates for performance
             if (now % 10 < 2) { // Update approximately every 10 frames
@@ -1193,7 +1165,7 @@ function checkBoundaryOffline() {
     }
 }
 
-// Simplified minimap update for offline mode
+// Simplified minimap update for offline mode - no AI snakes
 function updateMinimapOffline() {
     if (!minimapContext) return;
     
@@ -1221,23 +1193,6 @@ function updateMinimapOffline() {
         minimapContext.beginPath();
         minimapContext.arc(minimapX, minimapY, 1, 0, Math.PI * 2);
         minimapContext.fill();
-    }
-    
-    // Draw AI snakes
-    for (const id in otherPlayers) {
-        if (!id.startsWith('ai-')) continue;
-        
-        const ai = otherPlayers[id];
-        if (ai.segments.length > 0) {
-            const head = ai.segments[0];
-            const minimapX = (head.x + worldSize / 2) * minimapScale;
-            const minimapY = (head.y + worldSize / 2) * minimapScale;
-            
-            minimapContext.fillStyle = ai.color;
-            minimapContext.beginPath();
-            minimapContext.arc(minimapX, minimapY, 3, 0, Math.PI * 2);
-            minimapContext.fill();
-        }
     }
     
     // Draw player
