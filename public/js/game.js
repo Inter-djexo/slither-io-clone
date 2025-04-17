@@ -1,3 +1,36 @@
+// At the beginning of the file
+// Check if THREE is available, if not inject it as a fallback
+if (typeof THREE === 'undefined') {
+    console.warn("THREE.js library not detected, attempting to load fallback...");
+    
+    try {
+        // Create a script element to inject the fallback
+        const threeScript = document.createElement('script');
+        threeScript.src = 'https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js';
+        threeScript.async = true;
+        
+        // Add load event listener
+        threeScript.addEventListener('load', function() {
+            console.log("Fallback THREE.js loaded successfully!");
+            if (typeof init === 'function') {
+                setTimeout(init, 200);
+            }
+        });
+        
+        // Add error event listener
+        threeScript.addEventListener('error', function(e) {
+            console.error("Failed to load fallback THREE.js:", e);
+            alert("Could not load necessary game libraries. Please check your internet connection and try again.");
+        });
+        
+        // Append the script to the head
+        document.head.appendChild(threeScript);
+        
+    } catch (error) {
+        console.error("Error setting up fallback:", error);
+    }
+}
+
 console.log("Game.js loaded successfully!");
 
 // DOM Elements
@@ -2566,5 +2599,55 @@ function checkFoodCollisions() {
                 }
             }
         }
+    }
+} 
+
+// Initialize the game
+function init() {
+    try {
+        // Check if already initialized to prevent duplicate initialization
+        if (window.gameInitialized) {
+            console.log("Game already initialized, skipping initialization");
+            return;
+        }
+        
+        console.log("Initializing game...");
+        
+        // Don't try to auto-start music - will use buttons instead
+        
+        // Check if THREE is available
+        if (typeof THREE === 'undefined') {
+            console.error("THREE.js is not loaded! Waiting for fallback to load...");
+            // The fallback script will call init() again after loading
+            return;
+        }
+        
+        // Set up Three.js
+        setupThreeJS();
+        
+        // Apply performance optimizations
+        if (typeof optimizeRendering === 'function') {
+            optimizeRendering();
+        }
+        
+        // Initialize minimap
+        initMinimap();
+        
+        // Set up event listeners
+        setupEventListeners();
+        
+        // Start update loop
+        animate();
+        
+        // Hide game UI initially
+        gameUI.style.display = 'none';
+        
+        // Mark as initialized to prevent duplicate initialization
+        window.gameInitialized = true;
+        
+        console.log("Game initialized successfully!");
+    } catch (error) {
+        console.error("Error initializing game:", error);
+        alert("Error initializing game: " + error.message + "\n\nPlease try refreshing the page.");
     }
 } 
