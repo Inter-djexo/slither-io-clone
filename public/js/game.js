@@ -58,137 +58,283 @@ const MAX_SEGMENTS = 100;
 // Add a flag to track if we're in offline mode
 let offlineMode = false;
 
-// Add the original checkFoodCollisions function here before overriding it
-// Check for collisions with food
-function checkFoodCollisions() {
-    if (player.segments.length === 0) return;
+// Add these variable declarations at the top with the other game variables
+let playerName = "Anonymous Snake";
+let playerColor = "#" + Math.floor(Math.random() * 16777215).toString(16);
+
+// Near the top with other game variables, add these performance settings
+const PERFORMANCE = {
+    CULLING_DISTANCE: 1500,       // Only render objects within this distance
+    UPDATE_THROTTLE: 120,         // Milliseconds between position updates
+    FOOD_LIMIT: 100               // Maximum visible food items
+};
+
+// Add a performance monitor function
+let lastFrameTime = 0;
+let frameCount = 0;
+let fps = 0;
+let lastFpsUpdate = 0;
+// Timing for network updates
+let lastUpdateTime = 0;
+
+function updatePerformanceStats(now) {
+    // Calculate FPS
+    frameCount++;
     
-    const headX = player.segments[0].x;
-    const headY = player.segments[0].y;
-    
-    for (let i = foodItems.length - 1; i >= 0; i--) {
-        const food = foodItems[i];
-        const distance = Math.sqrt(Math.pow(headX - food.x, 2) + Math.pow(headY - food.y, 2));
+    if (now - lastFpsUpdate >= 1000) {
+        fps = frameCount;
+        frameCount = 0;
+        lastFpsUpdate = now;
         
-        if (distance < SEGMENT_SIZE + FOOD_SIZE) {
-            // Eat food
-            player.size += 1;
-            updateScore();
-            
-            // Add new segment if needed
-            if (player.segments.length < MAX_SEGMENTS) {
-                addSegment();
-            }
-            
-            // Tell server about eaten food
-            if (!offlineMode) {
-                socket.emit('eatFood', food.id);
-            }
-            
-            // Remove food locally
-            scene.remove(food.mesh);
-            foodItems.splice(i, 1);
+        // Log FPS to console every 5 seconds
+        if (now % 5000 < 1000) {
+            console.log(`Current FPS: ${fps}`);
         }
+        
+        // Automatically adjust detail level based on FPS
+        if (fps < 30 && !PERFORMANCE_SETTINGS.LOW_DETAIL_MODE) {
+            console.log("FPS is low, enabling low detail mode");
+            PERFORMANCE_SETTINGS.LOW_DETAIL_MODE = true;
+            applyDetailLevel();
+        } else if (fps > 50 && PERFORMANCE_SETTINGS.LOW_DETAIL_MODE) {
+            console.log("FPS is good, disabling low detail mode");
+            PERFORMANCE_SETTINGS.LOW_DETAIL_MODE = false;
+            applyDetailLevel();
+        }
+    }
+    
+    return now;
+}
+
+function applyDetailLevel() {
+    // Apply detail level changes to renderer
+    if (PERFORMANCE_SETTINGS.LOW_DETAIL_MODE) {
+        // Lower quality settings
+        renderer.setPixelRatio(window.devicePixelRatio > 1 ? 1 : window.devicePixelRatio);
+        renderer.shadowMap.enabled = false;
+        
+        // Reduce visible food
+        PERFORMANCE_SETTINGS.MAX_VISIBLE_FOOD = 50;
+    } else {
+        // Higher quality settings
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.shadowMap.enabled = true;
+        
+        // More visible food
+        PERFORMANCE_SETTINGS.MAX_VISIBLE_FOOD = 100;
     }
 }
 
-// Initialize the game
-function init() {
-    try {
-        // Check if already initialized to prevent duplicate initialization
-        if (window.gameInitialized) {
-            console.log("Game already initialized, skipping initialization");
-            return;
+// Add this function after setupThreeJS or before animate
+function optimizeRendering() {
+    // Optimize renderer
+    renderer.setPixelRatio(Math.min(1.5, window.devicePixelRatio));
+    renderer.shadowMap.enabled = false;
+    
+    // Reduce shadow quality for better performance
+    scene.traverse(obj => {
+        if (obj.isMesh) {
+            obj.castShadow = false;
+            obj.receiveShadow = false;
         }
-        
-        console.log("Initializing game...");
-        
-        // Don't try to auto-start music - will use buttons instead
-        
-        // Check if THREE is available
-        if (typeof THREE === 'undefined') {
-            console.error("THREE.js is not loaded!");
-            alert("Could not load THREE.js library. Please refresh the page and try again.");
-            return;
-        }
-        
-        // Set up Three.js
-        setupThreeJS();
-        
-        // Initialize minimap
-        initMinimap();
-        
-        // Set up event listeners
-        setupEventListeners();
-        
-        // Start update loop
-        animate();
-        
-        // Hide game UI initially
-        gameUI.style.display = 'none';
-        
-        // Mark as initialized to prevent duplicate initialization
-        window.gameInitialized = true;
-        
-        console.log("Game initialized successfully!");
-    } catch (error) {
-        console.error("Error initializing game:", error);
-        alert("Error initializing game: " + error.message);
+    });
+    
+    console.log("Applied performance optimizations");
+}
+
+// Replace the animate function with this optimized version
+function animate() {
+    requestAnimationFrame(animate);
+    
+    // Skip rendering if tab is not visible
+    if (document.hidden) return;
+    
+    // Update player if controls are enabled
+    if (controlsEnabled && player.segments && player.segments.length > 0) {
+        updatePlayer();
     }
+    
+    // Only update other players if not in offline mode
+    if (!offlineMode && otherPlayers) {
+        updateOtherPlayers();
+    }
+    
+    // Update environment effects - pulse star colors, nebula movement, etc.
+    updateEnvironmentEffects();
+    
+    // Update minimap
+    if (minimap) {
+        updateMinimap();
+    }
+    
+    // Apply distance culling to improve performance
+    cullDistantObjects();
+    
+    // Render the scene
+    renderer.render(scene, camera);
 }
 
-// Initialize the minimap
-function initMinimap() {
-    // Create canvas for minimap
-    minimapCanvas = document.createElement('canvas');
-    minimapCanvas.width = minimapSize;
-    minimapCanvas.height = minimapSize;
-    minimapContext = minimapCanvas.getContext('2d');
+// Add this function for object culling
+function cullDistantObjects() {
+    if (!player.segments || player.segments.length === 0) return;
     
-    // Style the canvas
-    minimapCanvas.style.width = '100%';
-    minimapCanvas.style.height = '100%';
-    
-    // Add to container
-    minimapContainer.appendChild(minimapCanvas);
-}
-
-// Set up Three.js scene, camera, and renderer
-function setupThreeJS() {
-    // Create scene
-    scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x181818);
-    
-    // Create camera (orthographic for 2D gameplay)
-    const aspectRatio = window.innerWidth / window.innerHeight;
-    const viewSize = 1200; // Increased view size to see more of the game world
-    camera = new THREE.OrthographicCamera(
-        -viewSize * aspectRatio / 2,
-        viewSize * aspectRatio / 2,
-        viewSize / 2,
-        -viewSize / 2,
-        1,
-        10000
+    const playerPos = new THREE.Vector3(
+        player.segments[0].x,
+        player.segments[0].y,
+        0
     );
-    camera.position.z = 1000;
     
-    // Create renderer
-    renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    document.getElementById('game-container').appendChild(renderer.domElement);
+    // Cull distant food
+    let visibleFoodCount = 0;
+    for (const foodId in foodItems) {
+        if (!foodItems[foodId] || !foodItems[foodId].mesh) continue;
+        
+        const food = foodItems[foodId];
+        const foodPos = new THREE.Vector3(food.x, food.y, 0);
+        const distance = foodPos.distanceTo(playerPos);
+        
+        // Only show food that's close enough and limit the total number
+        if (distance < PERFORMANCE.CULLING_DISTANCE && visibleFoodCount < PERFORMANCE.FOOD_LIMIT) {
+            food.mesh.visible = true;
+            visibleFoodCount++;
+        } else {
+            food.mesh.visible = false;
+        }
+    }
     
-    // Add grid for reference
-    addWorldGrid();
+    // Cull distant players
+    for (const id in otherPlayers) {
+        if (!otherPlayers[id] || !otherPlayers[id].segments) continue;
+        
+        const otherPlayer = otherPlayers[id];
+        // Use first segment position for distance check
+        if (otherPlayer.segments.length > 0) {
+            const otherPos = new THREE.Vector3(
+                otherPlayer.segments[0].x,
+                otherPlayer.segments[0].y,
+                0
+            );
+            const distance = otherPos.distanceTo(playerPos);
+            
+            // Set visibility based on distance
+            otherPlayer.segments.forEach(segment => {
+                if (segment.mesh) {
+                    segment.mesh.visible = distance < PERFORMANCE.CULLING_DISTANCE;
+                }
+            });
+            
+            // Also handle name labels
+            if (otherPlayer.nameLabel) {
+                otherPlayer.nameLabel.visible = distance < PERFORMANCE.CULLING_DISTANCE;
+            }
+        }
+    }
+}
+
+// Optimize player update function for performance
+function updatePlayer() {
+    if (!controlsEnabled || player.segments.length === 0) return;
     
-    // Handle window resize
-    window.addEventListener('resize', () => {
-        const aspectRatio = window.innerWidth / window.innerHeight;
-        camera.left = -viewSize * aspectRatio / 2;
-        camera.right = viewSize * aspectRatio / 2;
-        camera.top = viewSize / 2;
-        camera.bottom = -viewSize / 2;
-        camera.updateProjectionMatrix();
-        renderer.setSize(window.innerWidth, window.innerHeight);
+    // Calculate direction based on mouse position
+    const direction = new THREE.Vector2(
+        (mouse.x / window.innerWidth) * 2 - 1,
+        -(mouse.y / window.innerHeight) * 2 + 1
+    );
+    
+    // Normalize direction
+    direction.normalize();
+    
+    // Update head position
+    const head = player.segments[0];
+    const newX = head.x + direction.x * SNAKE_SPEED;
+    const newY = head.y + direction.y * SNAKE_SPEED;
+    
+    // Check if new position is within bounds
+    if (Math.abs(newX) < worldSize / 2 && Math.abs(newY) < worldSize / 2) {
+        head.x = newX;
+        head.y = newY;
+        head.mesh.position.set(head.x, head.y, 0);
+        
+        // Update name label position
+        if (head.nameLabel) {
+            head.nameLabel.position.set(head.x, head.y + 40, 0);
+        }
+    }
+    
+    // Update camera position to follow head
+    camera.position.set(head.x, head.y, camera.position.z);
+    
+    // Update tail segments
+    for (let i = 1; i < player.segments.length; i++) {
+        const segment = player.segments[i];
+        const prevSegment = player.segments[i - 1];
+        
+        // Direction to previous segment
+        const dx = prevSegment.x - segment.x;
+        const dy = prevSegment.y - segment.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        
+        // Only move if distance is greater than spacing
+        if (dist > SEGMENT_SPACING) {
+            const moveX = dx * (1 - SEGMENT_SPACING / dist);
+            const moveY = dy * (1 - SEGMENT_SPACING / dist);
+            
+            segment.x += moveX;
+            segment.y += moveY;
+            segment.mesh.position.set(segment.x, segment.y, 0);
+        }
+    }
+    
+    // Check for collisions with food
+    checkFoodCollisions();
+    
+    // Check for collisions with other players
+    checkPlayerCollisions();
+    
+    // Check for boundary crossing
+    checkBoundary();
+    
+    // Update the display of current length
+    updateScore();
+    
+    // Send position to server if online - throttle updates for performance
+    const currentTime = Date.now();
+    if (socket && socket.connected && !offlineMode && currentTime - lastUpdateTime > PERFORMANCE.UPDATE_THROTTLE) {
+        lastUpdateTime = currentTime;
+        
+        socket.emit('playerUpdate', {
+            id: socket.id,
+            x: head.x,
+            y: head.y,
+            size: player.size,
+            // Only send first few segments to reduce network load
+            segments: player.segments.slice(0, 5).map(s => ({ x: s.x, y: s.y }))
+        });
+    }
+}
+
+// Optimize how food is displayed based on distance from player
+function updateFoodVisibility() {
+    if (!player.segments || player.segments.length === 0) return;
+    
+    const playerPos = new THREE.Vector3(player.segments[0].x, player.segments[0].y, 0);
+    let visibleCount = 0;
+    
+    // Sort food by distance to player
+    const sortedFood = Object.values(foodItems).sort((a, b) => {
+        const distA = new THREE.Vector3(a.x, a.y, 0).distanceTo(playerPos);
+        const distB = new THREE.Vector3(b.x, b.y, 0).distanceTo(playerPos);
+        return distA - distB;
+    });
+    
+    // Show closest food, hide distant food
+    sortedFood.forEach((food, index) => {
+        if (index < PERFORMANCE_SETTINGS.MAX_VISIBLE_FOOD) {
+            food.mesh.visible = true;
+            visibleCount++;
+        } else {
+            food.mesh.visible = false;
+        }
     });
 }
 
@@ -473,23 +619,34 @@ function setupEventListeners() {
 function startGame() {
     console.log("startGame() called");
     
-    // Get player name
-    player.name = playerNameInput.value.trim() || 'Player' + Math.floor(Math.random() * 1000);
-    console.log("Player name:", player.name);
+    // Get player name or use default
+    const nameInput = document.getElementById('player-name');
+    playerName = nameInput.value.trim() || "Anonymous Snake";
+    console.log("Player name:", playerName);
     
-    // Generate random color for player
-    player.color = '#' + Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0');
-    console.log("Player color:", player.color);
+    // Generate random color if not already set
+    if (!playerColor) {
+        playerColor = "#" + Math.floor(Math.random() * 16777215).toString(16);
+    }
+    console.log("Player color:", playerColor);
     
-    // Connect to Socket.io server directly without Firebase
-    connectToServer();
-    
-    // Hide start screen and show game UI
+    // Hide start screen
     startScreen.style.display = 'none';
+    
+    // Show game UI
     gameUI.style.display = 'block';
     
     // Enable controls
     controlsEnabled = true;
+    
+    // Create player and connect to server if not already connected
+    if (!isConnectedToServer) {
+        connectToServer();
+    } else {
+        // If already connected, just create player
+        createPlayerSnake();
+    }
+    
     gameStarted = true;
 }
 
@@ -582,10 +739,16 @@ function connectToServer() {
                 createPlayerSnake();
             }
             
+            // Make sure playerName and playerColor are defined
+            const name = typeof playerName !== 'undefined' ? playerName : 'Anonymous Snake';
+            const color = typeof playerColor !== 'undefined' ? playerColor : '#' + Math.floor(Math.random() * 16777215).toString(16);
+            
+            console.log(`Emitting newPlayer event with name: ${name}, color: ${color}`);
+            
             // Send player info to server
             socket.emit('newPlayer', {
-                name: playerName || 'Anonymous Snake',
-                color: playerColor
+                name: name,
+                color: color
             });
         });
         
@@ -774,7 +937,7 @@ function startHeartbeat() {
 }
 
 // Update player function in the animation loop
-function updatePlayer(deltaTime) {
+function updatePlayer() {
     if (!controlsEnabled || player.segments.length === 0) return;
     
     // Calculate direction based on mouse position
@@ -839,14 +1002,18 @@ function updatePlayer(deltaTime) {
     // Update the display of current length
     updateScore();
     
-    // Send position to server if online
-    if (socket && socket.connected && !offlineMode) {
+    // Send position to server if online - throttle updates for performance
+    const currentTime = Date.now();
+    if (socket && socket.connected && !offlineMode && currentTime - lastUpdateTime > PERFORMANCE.UPDATE_THROTTLE) {
+        lastUpdateTime = currentTime;
+        
         socket.emit('playerUpdate', {
             id: socket.id,
             x: head.x,
             y: head.y,
             size: player.size,
-            segments: player.segments.map(s => ({ x: s.x, y: s.y }))
+            // Only send first few segments to reduce network load
+            segments: player.segments.slice(0, 5).map(s => ({ x: s.x, y: s.y }))
         });
     }
 }
@@ -2091,7 +2258,7 @@ function addSegment() {
 }
 
 // Update the environment effects (animations, etc.)
-function updateEnvironmentEffects(deltaTime) {
+function updateEnvironmentEffects() {
     // Animate food items
     for (const food of foodItems) {
         if (food.mesh) {

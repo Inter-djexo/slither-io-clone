@@ -3,10 +3,28 @@ const http = require('http');
 const socketIo = require('socket.io');
 const path = require('path');
 const cors = require('cors');
+const os = require('os');
 
 console.log("=== STARTING SERVER ===");
 console.log("Node.js version:", process.version);
 console.log("Current directory:", __dirname);
+
+// Constants
+const PORT = process.env.PORT || 48765;
+const MAX_CONNECTIONS_PER_MINUTE = 60;
+const MAX_ACTIONS_PER_SECOND = 20;
+const FOOD_COUNT = 300;
+const WORLD_SIZE = 8000;
+
+// Performance config
+const PERFORMANCE = {
+    STATUS_INTERVAL: 30000,       // How often to log server status (ms)
+    PLAYER_CLEANUP_INTERVAL: 60000, // How often to clean up inactive players (ms)
+    MAX_INACTIVE_TIME: 60000,     // Maximum time a player can be inactive (ms)
+    MOVEMENT_THRESHOLD: 1.0,      // Minimum distance to consider a movement
+    RATE_LIMIT_CLEANUP: 300000,   // How often to clean up rate limit data (ms)
+    GC_INTERVAL: 300000           // Force garbage collection if available (ms)
+};
 
 // Create Express app and HTTP server
 const app = express();
@@ -41,21 +59,96 @@ console.log("Serving static files from:", path.join(__dirname, 'public'));
 // Game state variables
 const players = {};
 const food = [];
-const worldSize = 2000;
-const FOOD_COUNT = 300;
+const worldSize = WORLD_SIZE;
 const FOOD_SIZE = 15;
 
 // Rate limiting
-const MAX_CONNECTIONS_PER_MINUTE = 100;
-const MAX_ACTIONS_PER_SECOND = 20;
 const connectionCount = {};
 const actionCount = {};
+
+// Add last active timestamp to each player
+const playerActivity = {};
 
 // Create initial food
 for (let i = 0; i < FOOD_COUNT; i++) {
     generateFood();
 }
 console.log(`Generated ${FOOD_COUNT} food items`);
+
+// Start the server
+server.listen(PORT, () => {
+    console.log(`
+    ==============================================
+    ✅ Server running on port ${PORT}
+    ==============================================
+    
+    Local access: http://localhost:${PORT}
+    Player count: ${Object.keys(players).length}
+    Food count: ${food.length}
+    Memory usage: ${JSON.stringify(process.memoryUsage())}
+    ==============================================
+    `);
+});
+
+// Regularly log server status
+setInterval(() => {
+    const memoryUsage = process.memoryUsage();
+    const memoryDiff = {
+        rss: memoryUsage.rss - initialMemory.rss,
+        heapTotal: memoryUsage.heapTotal - initialMemory.heapTotal,
+        heapUsed: memoryUsage.heapUsed - initialMemory.heapUsed,
+        external: memoryUsage.external - initialMemory.external
+    };
+    
+    console.log(`
+    ==============================================
+    📊 SERVER STATUS
+    ==============================================
+    Players: ${Object.keys(players).length}
+    Food: ${food.length}
+    Memory: ${JSON.stringify(memoryUsage)}
+    Memory diff: ${JSON.stringify(memoryDiff)}
+    ==============================================
+    `);
+}, PERFORMANCE.STATUS_INTERVAL);
+
+// Clean up inactive players
+setInterval(() => {
+    const now = Date.now();
+    let removed = 0;
+    
+    for (const id in playerActivity) {
+        if (now - playerActivity[id] > PERFORMANCE.MAX_INACTIVE_TIME && players[id]) {
+            console.log(`Removing inactive player: ${id}`);
+            delete players[id];
+            delete playerActivity[id];
+            io.emit('playerDisconnect', id);
+            removed++;
+        }
+    }
+    
+    if (removed > 0) {
+        console.log(`Cleaned up ${removed} inactive players`);
+    }
+}, PERFORMANCE.PLAYER_CLEANUP_INTERVAL);
+
+// Clean up rate limit data
+setInterval(() => {
+    const now = Date.now();
+    for (const ip in connectionCount) {
+        connectionCount[ip] = connectionCount[ip].filter(time => now - time < 60000);
+        if (connectionCount[ip].length === 0) {
+            delete connectionCount[ip];
+        }
+    }
+    
+    // Remove old action counts
+    for (const id in actionCount) {
+        if (now - actionCount[id].lastCheck > 10000) {
+            delete actionCount[id];
+        }
+    }
+}, PERFORMANCE.RATE_LIMIT_CLEANUP);
 
 // Socket.IO connection handling
 io.on('connection', (socket) => {
@@ -88,6 +181,7 @@ io.on('connection', (socket) => {
     
     // Add current connection
     connectionCount[ip].push(now);
+    playerActivity[socket.id] = now;
     
     // Check if too many connections from this IP
     if (connectionCount[ip].length > MAX_CONNECTIONS_PER_MINUTE) {
@@ -105,6 +199,7 @@ io.on('connection', (socket) => {
     // New player joins
     socket.on('newPlayer', (playerData) => {
         console.log(`New player joined: ${socket.id}`, playerData);
+        playerActivity[socket.id] = Date.now();
         
         // Validate player data
         if (!playerData.name) {
@@ -120,7 +215,8 @@ io.on('connection', (socket) => {
             name: playerData.name.substring(0, 20), // Limit name length
             color: playerData.color || '#' + Math.floor(Math.random() * 16777215).toString(16),
             segments: [],
-            score: 0
+            score: 0,
+            lastUpdated: Date.now()
         };
         
         // Log the created player
@@ -143,8 +239,12 @@ io.on('connection', (socket) => {
         socket.emit('gameState', gameState);
     });
     
-    // Player movement
+    // Player movement - don't update the server on every tiny movement
+    let lastPosition = { x: 0, y: 0 };
+    
     socket.on('playerUpdate', (data) => {
+        playerActivity[socket.id] = Date.now();
+        
         // Rate limiting for actions
         const now = Date.now();
         
@@ -160,16 +260,41 @@ io.on('connection', (socket) => {
         actionCount[socket.id].count++;
         
         if (actionCount[socket.id].count > MAX_ACTIONS_PER_SECOND) {
-            console.log(`Action rate limit exceeded for socket ${socket.id}`);
+            // console.log(`Action rate limit exceeded for socket ${socket.id}`);
             return;
         }
         
+        // Check if we have a valid player
+        if (!players[socket.id]) return;
+        
+        // Check if the movement is significant enough to update
+        const distanceMoved = Math.sqrt(
+            Math.pow(data.x - lastPosition.x, 2) + 
+            Math.pow(data.y - lastPosition.y, 2)
+        );
+        
+        if (distanceMoved < PERFORMANCE.MOVEMENT_THRESHOLD && 
+            lastPosition.x !== 0 && lastPosition.y !== 0) {
+            return; // Skip small movements to reduce network traffic
+        }
+        
+        // Update last position
+        lastPosition.x = data.x;
+        lastPosition.y = data.y;
+        
         // Update player data if valid
-        if (players[socket.id] && isValidMovement(players[socket.id], data)) {
+        if (isValidMovement(players[socket.id], data)) {
             players[socket.id].x = data.x;
             players[socket.id].y = data.y;
             players[socket.id].size = data.size;
-            players[socket.id].segments = data.segments || [];
+            
+            // Only update segments if provided
+            if (data.segments && data.segments.length > 0) {
+                players[socket.id].segments = data.segments;
+            }
+            
+            // Update last activity time
+            players[socket.id].lastUpdated = now;
             
             // Broadcast player movement to all other players
             socket.broadcast.emit('playerMoved', players[socket.id]);
@@ -184,12 +309,15 @@ io.on('connection', (socket) => {
     
     // Player explicitly wants a list of all players
     socket.on('getPlayers', () => {
+        playerActivity[socket.id] = Date.now();
         console.log(`Player ${socket.id} requested player list`);
         socket.emit('playerList', players);
     });
     
     // Heartbeat to keep connection alive and ensure all players are displayed
     socket.on('heartbeat', () => {
+        playerActivity[socket.id] = Date.now();
+        
         // Send current player count
         socket.emit('playerCount', Object.keys(players).length);
         
@@ -198,12 +326,13 @@ io.on('connection', (socket) => {
         if (!socket.lastSync || now - socket.lastSync > 10000) {
             socket.lastSync = now;
             socket.emit('syncPlayers', players);
-            console.log(`Sent player sync to ${socket.id}`);
+            // console.log(`Sent player sync to ${socket.id}`);
         }
     });
     
     // Player eats food
     socket.on('eatFood', (foodId) => {
+        playerActivity[socket.id] = Date.now();
         const foodIndex = food.findIndex(f => f.id === foodId);
         
         if (foodIndex !== -1 && players[socket.id]) {
@@ -231,7 +360,7 @@ io.on('connection', (socket) => {
                 }
                 
                 // Generate new food
-                const newFood = generateFood();
+                const newFood = generateFood(1)[0];
                 
                 // Broadcast food update to all players
                 io.emit('foodUpdate', {
@@ -297,12 +426,7 @@ io.on('connection', (socket) => {
             // Distribute some food where player disconnected
             const player = players[socket.id];
             const foodCount = Math.max(3, Math.floor(player.size / 10));
-            const newFood = [];
-            
-            for (let i = 0; i < foodCount; i++) {
-                const food = generateFoodAt(player.x, player.y, 50);
-                newFood.push(food);
-            }
+            const newFood = generateFoodAt(player.x, player.y, foodCount, 50);
             
             // Broadcast food update
             if (newFood.length > 0) {
@@ -314,6 +438,7 @@ io.on('connection', (socket) => {
             
             // Remove player and notify all clients
             delete players[socket.id];
+            delete playerActivity[socket.id];
             io.emit('playerDisconnect', socket.id);
             
             // Log active players after disconnection
@@ -326,73 +451,70 @@ io.on('connection', (socket) => {
     });
 });
 
-// Generate random food
-function generateFood() {
-    const id = 'food-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
-    const x = (Math.random() * 2 - 1) * worldSize / 2;
-    const y = (Math.random() * 2 - 1) * worldSize / 2;
+// Generate food items
+function generateFood(count = FOOD_COUNT) {
+    const newFood = [];
     
-    const newFood = {
-        id,
-        x,
-        y,
-        size: FOOD_SIZE,
-        color: '#' + Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0')
-    };
+    for (let i = 0; i < count; i++) {
+        const foodItem = {
+            id: Date.now() + '-' + Math.random().toString(36).substr(2, 9),
+            x: Math.random() * worldSize - worldSize/2,
+            y: Math.random() * worldSize - worldSize/2,
+            size: 10 + Math.random() * 5,
+            color: '#' + Math.floor(Math.random() * 16777215).toString(16)
+        };
+        
+        newFood.push(foodItem);
+        food.push(foodItem);
+    }
     
-    food.push(newFood);
     return newFood;
 }
 
-// Generate food at specific location with some spread
-function generateFoodAt(x, y, spread) {
-    const id = 'food-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
-    const foodX = x + (Math.random() * 2 - 1) * spread;
-    const foodY = y + (Math.random() * 2 - 1) * spread;
+// Generate food at a specific location
+function generateFoodAt(x, y, count, spread = 100) {
+    const newFood = [];
     
-    const newFood = {
-        id,
-        x: foodX,
-        y: foodY,
-        size: FOOD_SIZE,
-        color: '#' + Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0')
-    };
+    for (let i = 0; i < count; i++) {
+        const foodItem = {
+            id: Date.now() + '-' + Math.random().toString(36).substr(2, 9),
+            x: x + (Math.random() * 2 - 1) * spread,
+            y: y + (Math.random() * 2 - 1) * spread,
+            size: 10 + Math.random() * 5,
+            color: '#' + Math.floor(Math.random() * 16777215).toString(16)
+        };
+        
+        newFood.push(foodItem);
+        food.push(foodItem);
+    }
     
-    food.push(newFood);
     return newFood;
 }
 
 // Validate player movement
-function isValidMovement(player, newData) {
-    // Basic checks for data integrity
-    if (!newData || typeof newData.x !== 'number' || typeof newData.y !== 'number') {
+function isValidMovement(player, newPosition) {
+    if (!player) return false;
+    
+    // Check if position is within bounds
+    if (Math.abs(newPosition.x) > worldSize/2 || Math.abs(newPosition.y) > worldSize/2) {
         return false;
     }
     
-    // Check if position is within world bounds
-    if (Math.abs(newData.x) > worldSize/2 || Math.abs(newData.y) > worldSize/2) {
+    // Check if size increase is reasonable
+    if (newPosition.size > player.size + 5) {
         return false;
     }
     
-    // Check if player is trying to move too fast
-    if (player.x !== undefined && player.y !== undefined) {
-        const distance = Math.sqrt(
-            Math.pow(newData.x - player.x, 2) +
-            Math.pow(newData.y - player.y, 2)
-        );
-        
-        // Maximum allowed distance per update (can be adjusted)
-        const maxDistance = 30;
-        
-        if (distance > maxDistance) {
-            console.log(`Player ${player.id} moving too fast: ${distance} units`);
-            return false;
-        }
-    }
+    // Check if movement speed is reasonable
+    const distance = Math.sqrt(
+        Math.pow(player.x - newPosition.x, 2) +
+        Math.pow(player.y - newPosition.y, 2)
+    );
     
-    // Check if player size is reasonable
-    if (newData.size > player.size + 5) {
-        console.log(`Player ${player.id} trying to increase size too quickly`);
+    // Maximum reasonable distance for movement
+    const maxDistance = 20; // Adjust based on your game's movement speed
+    
+    if (distance > maxDistance) {
         return false;
     }
     
@@ -421,20 +543,4 @@ app.get('/health', (req, res) => {
 app.get('/', (req, res) => {
     console.log('Root route accessed');
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-// Start server
-const PORT = process.env.PORT || 48765;
-server.listen(PORT, () => {
-    console.log(`
-    ==============================================
-    ✅ Server running on port ${PORT}
-    ==============================================
-    
-    Local access: http://localhost:${PORT}
-    Player count: 0
-    Food count: ${food.length}
-    Memory usage: ${JSON.stringify(process.memoryUsage())}
-    ==============================================
-    `);
 }); 
