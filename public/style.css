@@ -615,4 +615,79 @@ canvas {
         padding: 12px 25px;
         font-size: 14px;
     }
+}
+
+/* Connection status styles */
+.connection-status {
+    background: rgba(0, 0, 0, 0.7);
+    padding: 15px;
+    border-radius: 10px;
+    margin: 15px auto;
+    max-width: 400px;
+    text-align: center;
+    border: 1px solid #ff5555;
+}
+
+.connection-status #connection-indicator {
+    display: inline-block;
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-weight: bold;
+    margin-bottom: 10px;
+}
+
+.connection-status #connection-indicator.offline {
+    background: rgba(255, 0, 0, 0.3);
+    color: #ff5555;
+}
+
+.connection-status #connection-indicator.online {
+    background: rgba(0, 255, 0, 0.3);
+    color: #00ff4c;
+}
+
+.connection-message {
+    font-size: 0.9rem;
+    color: #ccc;
+    line-height: 1.4;
+}
+
+.connection-message a {
+    color: #00ff4c;
+    text-decoration: underline;
+    transition: color 0.3s;
+}
+
+.connection-message a:hover {
+    color: #fff;
+    text-shadow: 0 0 10px rgba(0, 255, 76, 0.8);
+}
+
+/* Enhanced music button */
+#music-button {
+    margin: 15px auto;
+}
+
+#toggle-music {
+    padding: 12px 25px;
+    background: linear-gradient(45deg, #4a0a6f, #0a3a7f);
+    border: 2px solid #00ff4c;
+    border-radius: 30px;
+    color: white;
+    cursor: pointer;
+    font-size: 1rem;
+    transition: all 0.3s;
+    display: block;
+    margin: 0 auto;
+    box-shadow: 0 0 15px rgba(0, 255, 76, 0.3);
+}
+
+#toggle-music:hover {
+    background: linear-gradient(45deg, #530a7f, #0a4a9f);
+    box-shadow: 0 0 20px rgba(0, 255, 76, 0.5);
+    transform: translateY(-2px);
+}
+
+#toggle-music i {
+    margin-right: 8px;
 } 

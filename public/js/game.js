@@ -386,15 +386,13 @@ function addDecorations() {
 function toggleMusic() {
     if (musicPlaying) {
         backgroundMusic.pause();
-        musicButton.textContent = "🔇 Play Music";
-        toggleMusicButton.textContent = "🔇";
+        toggleMusicButton.innerHTML = '<i class="fas fa-music"></i> Toggle Cosmic Sounds';
         musicPlaying = false;
     } else {
         backgroundMusic.volume = 0.3;
         backgroundMusic.play()
             .then(() => {
-                musicButton.textContent = "🔊 Stop Music";
-                toggleMusicButton.textContent = "🔊";
+                toggleMusicButton.innerHTML = '<i class="fas fa-volume-mute"></i> Stop Cosmic Sounds';
                 musicPlaying = true;
             })
             .catch(e => {
@@ -472,66 +470,70 @@ function connectToServer() {
             return;
         }
         
-        // Force offline mode for all non-localhost domains to avoid endless spinner
-        if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
-            console.log("Remote domain detected. Using offline mode for better experience.");
+        // Update connection indicator UI
+        const connectionIndicator = document.getElementById('connection-indicator');
+        if (connectionIndicator) {
+            connectionIndicator.className = 'checking';
+            connectionIndicator.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Checking connection...';
+        }
+        
+        // Determine server URL based on environment (local vs production)
+        let serverUrl;
+        
+        // Direct mode - if we're on Render.com, we should be able to use multiplayer
+        if (window.location.hostname === 'slither-io-clone.onrender.com' || 
+            window.location.hostname === 'localhost' || 
+            window.location.hostname === '127.0.0.1') {
+            
+            serverUrl = window.location.origin;
+            console.log(`Using direct connection to server at: ${serverUrl}`);
+            
+            // Try to connect without falling back to offline mode
+            socket = io(serverUrl, {
+                reconnectionAttempts: 5,
+                timeout: 8000,
+                transports: ['websocket', 'polling']
+            });
+            
+            // Handle connection success
+            socket.on('connect', () => {
+                console.log('Connected to server successfully');
+                document.getElementById('loading-screen').style.display = 'none';
+                
+                // Update connection indicator
+                if (connectionIndicator) {
+                    connectionIndicator.className = 'online';
+                    connectionIndicator.innerHTML = '<i class="fas fa-wifi"></i> Multiplayer Mode';
+                    
+                    const connectionMessage = document.querySelector('.connection-message');
+                    if (connectionMessage) {
+                        connectionMessage.innerHTML = "You're connected to the multiplayer server. Compete with other players!";
+                    }
+                }
+                
+                // Continue with game setup...
+                createPlayerSnake();
+                socket.emit('newPlayer', {
+                    name: player.name,
+                    color: player.color
+                });
+            });
+            
+            // Handle connection error for direct connection
+            socket.on('connect_error', (error) => {
+                console.error('Socket.io connection error:', error);
+                enableOfflineMode("Server connection failed. Playing in offline mode.");
+            });
+            
+        } else {
+            // For all other domains (like Netlify), use offline mode immediately
+            console.log("Non-server domain detected. Using offline mode for better experience.");
             enableOfflineMode("Remote hosting detected");
             return;
         }
         
-        // Add a very short timeout to hide the loading screen if connection takes too long
-        const connectionTimeout = setTimeout(() => {
-            enableOfflineMode("Connection to server timed out.");
-        }, 3000); // Very short timeout for better user experience
-        
-        // Determine server URL based on environment (local vs production)
-        const isProduction = window.location.hostname.indexOf('netlify.app') !== -1 || 
-                            window.location.hostname.indexOf('onrender.com') !== -1;
-        
-        // Use the appropriate server URL based on environment
-        const serverUrl = isProduction 
-            ? (window.location.hostname.indexOf('onrender.com') !== -1 
-               ? window.location.origin  // If we're on Render, use the same origin
-               : 'https://slither-io-clone.onrender.com')  // Otherwise use the Render URL
-            : window.location.hostname + ':48765';   // Local development URL
-        
-        console.log(`Connecting to socket server at: ${serverUrl}`);
-        
-        // Connect to Socket.io server
-        socket = io(serverUrl, {
-            reconnectionAttempts: 3, // Reduce reconnection attempts for faster fallback
-            timeout: 5000, // Shorter timeout
-            transports: ['websocket', 'polling']
-        });
-        
-        // When connected to server
-        socket.on('connect', () => {
-            console.log('Connected to server successfully');
-            clearTimeout(connectionTimeout); // Clear the timeout on successful connection
-            document.getElementById('loading-screen').style.display = 'none';
-        });
-        
-        // Handle connection error
-        socket.on('connect_error', (error) => {
-            console.error('Socket.io connection error:', error);
-            enableOfflineMode("Could not connect to game server.");
-            clearTimeout(connectionTimeout);
-        });
-        
-        // Receive initial game state
-        socket.on('gameState', (data) => {
-            // Initialize other players
-            for (const id in data.players) {
-                if (id !== socket.id) {
-                    createOtherPlayer(id, data.players[id]);
-                }
-            }
-            
-            // Initialize food
-            for (const foodItem of data.food) {
-                createFood(foodItem);
-            }
-        });
+        // Rest of the Socket.io event handlers...
+        // ...
         
         // Handle new player joining
         socket.on('newPlayer', (playerData) => {
@@ -558,7 +560,7 @@ function connectToServer() {
         });
         
         // Handle player disconnection
-        socket.on('playerDisconnected', (playerId) => {
+        socket.on('playerDisconnect', (playerId) => {
             removeOtherPlayer(playerId);
         });
         
@@ -575,6 +577,22 @@ function connectToServer() {
                 camera.position.set(positionData.x, positionData.y, camera.position.z);
             }
         });
+        
+        // Receive initial game state
+        socket.on('gameState', (data) => {
+            // Initialize other players
+            for (const id in data.players) {
+                if (id !== socket.id) {
+                    createOtherPlayer(id, data.players[id]);
+                }
+            }
+            
+            // Initialize food
+            for (const foodItem of data.food) {
+                createFood(foodItem);
+            }
+        });
+        
     } catch (error) {
         console.error('Error initializing Socket.io:', error);
         enableOfflineMode("Error initializing game connection.");
@@ -585,6 +603,13 @@ function connectToServer() {
 function enableOfflineMode(reason) {
     offlineMode = true;
     console.log("Enabling offline mode:", reason);
+    
+    // Update connection indicator to show offline status
+    const connectionIndicator = document.getElementById('connection-indicator');
+    if (connectionIndicator) {
+        connectionIndicator.className = 'offline';
+        connectionIndicator.innerHTML = '<i class="fas fa-wifi-slash"></i> Offline Mode';
+    }
     
     // Hide loading screen
     document.getElementById('loading-screen').style.display = 'none';
@@ -603,7 +628,7 @@ function enableOfflineMode(reason) {
             <i class="fas fa-wifi-slash"></i>
             <h3>Offline Mode Active</h3>
             <p>${reason}</p>
-            <p class="offline-description">You can still enjoy the game in single-player mode with no multiplayer features.</p>
+            <p class="offline-description">You can still enjoy the game in single-player mode. For multiplayer, visit <a href="https://slither-io-clone.onrender.com" target="_blank">our server directly</a>.</p>
             <button id="offline-continue">Start Playing</button>
         </div>
     `;
