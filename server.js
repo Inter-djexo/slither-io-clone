@@ -4,6 +4,10 @@ const socketIo = require('socket.io');
 const path = require('path');
 const cors = require('cors');
 
+console.log("=== STARTING SERVER ===");
+console.log("Node.js version:", process.version);
+console.log("Current directory:", __dirname);
+
 // Create Express app and HTTP server
 const app = express();
 const server = http.createServer(app);
@@ -14,6 +18,8 @@ app.use(cors({
     methods: ['GET', 'POST'],
     credentials: true
 }));
+
+console.log("CORS configured for all origins");
 
 // Set up Socket.IO with permissive CORS
 const io = socketIo(server, {
@@ -26,8 +32,11 @@ const io = socketIo(server, {
     transports: ['websocket', 'polling']
 });
 
+console.log("Socket.IO configured with the following origins:", ["https://slither-io.netlify.app", "https://slither-io-clone.onrender.com", "http://localhost:48765"]);
+
 // Serve static files
 app.use(express.static(path.join(__dirname, 'public')));
+console.log("Serving static files from:", path.join(__dirname, 'public'));
 
 // Game state variables
 const players = {};
@@ -46,17 +55,20 @@ const actionCount = {};
 for (let i = 0; i < FOOD_COUNT; i++) {
     generateFood();
 }
+console.log(`Generated ${FOOD_COUNT} food items`);
 
 // Socket.IO connection handling
 io.on('connection', (socket) => {
-    console.log('New player connected:', socket.id);
+    console.log('=== NEW PLAYER CONNECTED ===');
+    console.log('ID:', socket.id);
     
     // Log connection source for debugging
     const origin = socket.handshake.headers.origin || 'Unknown Origin';
-    console.log(`Connection from: ${origin} - Socket ID: ${socket.id}`);
+    const ip = socket.handshake.address || 'Unknown IP';
+    console.log(`Connection from: ${origin} - IP: ${ip} - Socket ID: ${socket.id}`);
+    console.log('Headers:', JSON.stringify(socket.handshake.headers));
     
     // Rate limiting for connections
-    const ip = socket.handshake.address;
     const now = Date.now();
     
     if (!connectionCount[ip]) {
@@ -84,6 +96,8 @@ io.on('connection', (socket) => {
     
     // New player joins
     socket.on('newPlayer', (playerData) => {
+        console.log(`New player joined: ${socket.id}`, playerData);
+        
         // Validate player data
         if (!playerData.name) {
             playerData.name = 'Anonymous Snake';
@@ -109,6 +123,8 @@ io.on('connection', (socket) => {
             players,
             food
         });
+        
+        console.log(`Sent game state to ${socket.id} with ${Object.keys(players).length} players and ${food.length} food items`);
     });
     
     // Player movement
@@ -345,12 +361,15 @@ function isValidMovement(player, newData) {
 
 // Handle custom routes
 app.get('/status', (req, res) => {
-    res.json({
+    const status = {
         status: 'online',
         players: Object.keys(players).length,
         food: food.length,
-        uptime: process.uptime()
-    });
+        uptime: process.uptime(),
+        memory: process.memoryUsage()
+    };
+    console.log(`Status request received: ${JSON.stringify(status)}`);
+    res.json(status);
 });
 
 // Add a simple healthcheck endpoint
@@ -358,8 +377,24 @@ app.get('/health', (req, res) => {
     res.status(200).send('OK');
 });
 
+// Default route
+app.get('/', (req, res) => {
+    console.log('Root route accessed');
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
 // Start server
 const PORT = process.env.PORT || 48765;
 server.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(`
+    ==============================================
+    ✅ Server running on port ${PORT}
+    ==============================================
+    
+    Local access: http://localhost:${PORT}
+    Player count: 0
+    Food count: ${food.length}
+    Memory usage: ${JSON.stringify(process.memoryUsage())}
+    ==============================================
+    `);
 }); 

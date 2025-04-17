@@ -38,6 +38,10 @@ let mouse = new THREE.Vector2();
 let gameObjects = {};
 let cameraOffset = 300;
 let worldSize = 10000;
+let isConnectedToServer = false;
+let isOfflineMode = false;
+let connectionTimeout = null;
+let playerId = null;
 
 // Minimap variables
 let minimapCanvas, minimapContext;
@@ -491,150 +495,209 @@ function startGame() {
 
 // Connect to Socket.io server
 function connectToServer() {
-    // Use the deployed server URL directly
-    const serverUrl = 'https://slither-io-clone.onrender.com';
-    console.log(`Attempting to connect to server: ${serverUrl}`);
+    // Detailed connection logging
+    console.log("====== CONNECTION ATTEMPT LOG ======");
+    console.log("Current hostname:", window.location.hostname);
+    console.log("Current URL:", window.location.href);
     
     try {
-        // Improved Socket.IO connection with debugging options
-        socket = io(serverUrl, {
-            timeout: 8000,
-            reconnectionAttempts: 3,
-            forceNew: true,
-            transports: ['websocket', 'polling'],
-            debug: true,
-            query: {
-                clientVersion: '1.0.0'
-            }
-        });
+        const serverUrl = 'https://slither-io-clone.onrender.com';
+        console.log(`Attempting to connect to server at: ${serverUrl}`);
         
-        // Log all socket events for troubleshooting
-        const events = ['connect', 'disconnect', 'connect_error', 'error', 'reconnect', 'reconnect_attempt', 'reconnect_failed'];
+        // Get or create connection indicator
+        const connectionIndicator = document.getElementById('connection-indicator');
+        if (connectionIndicator) {
+            connectionIndicator.className = 'checking';
+            connectionIndicator.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Connecting...';
+        }
+        
+        // Create socket with logging
+        console.log("Creating socket.io instance...");
+        socket = io(serverUrl, {
+            reconnectionAttempts: 5,
+            reconnectionDelay: 1000,
+            timeout: 10000,
+            transports: ['polling', 'websocket'],
+            forceNew: true,
+            autoConnect: true,
+            query: { clientVersion: '1.0.1' }
+        });
+
+        console.log("Socket.io instance created, waiting for events...");
+        
+        // Set connection timeout - server must respond within 10 seconds
+        connectionTimeout = setTimeout(() => {
+            if (!isConnectedToServer) {
+                console.error("Connection timed out after 10 seconds");
+                showConnectionError("Connection timed out");
+            }
+        }, 10000);
+        
+        // Log all socket events for debugging
+        const events = [
+            'connect', 'disconnect', 'connect_error', 'connect_timeout',
+            'error', 'reconnect', 'reconnect_attempt', 'reconnect_error', 'reconnect_failed'
+        ];
+        
         events.forEach(event => {
             socket.on(event, (...args) => {
-                console.log(`Socket.IO ${event} event:`, args);
+                console.log(`Socket event [${event}]:`, args);
             });
         });
         
+        // Connection established
         socket.on('connect', () => {
-            console.log('Connected to server! Socket ID:', socket.id);
-            document.getElementById('connection-indicator').className = 'online';
-            document.getElementById('connection-indicator').innerHTML = '<i class="fas fa-wifi"></i> Online Mode';
-            document.querySelector('.connection-message').textContent = 'Connected to multiplayer server!';
+            console.log("✅ CONNECTED TO SERVER!");
+            console.log("Socket ID:", socket.id);
             
-            // Set connected flag
+            // Clear timeout
+            if (connectionTimeout) {
+                clearTimeout(connectionTimeout);
+                connectionTimeout = null;
+            }
+            
+            // Update UI
             isConnectedToServer = true;
+            isOfflineMode = false;
             
-            // Hide loading screen if visible
-            const loadingScreen = document.getElementById('loading-screen');
-            if (loadingScreen) loadingScreen.style.display = 'none';
-            
-            // If already in the game, update server with current position
-            if (player && isPlaying) {
-                socket.emit('playerUpdate', {
-                    id: playerId,
-                    x: player.position.x,
-                    y: player.position.y,
-                    size: player.scale.x,
-                    name: playerName
-                });
-            } else {
-                // Continue with game setup
-                createPlayerSnake();
-                socket.emit('newPlayer', {
-                    name: playerName,
-                    color: playerColor
-                });
+            if (connectionIndicator) {
+                connectionIndicator.className = 'online';
+                connectionIndicator.innerHTML = '<i class="fas fa-wifi"></i> Online Mode';
             }
+            
+            // Hide loading screen
+            document.getElementById('loading-screen').style.display = 'none';
+            
+            // Continue with game setup
+            console.log("Sending new player info to server...");
+            socket.emit('newPlayer', {
+                name: playerName || 'Anonymous Snake',
+                color: playerColor
+            });
         });
         
+        // Connection error
         socket.on('connect_error', (error) => {
-            console.error('Connection error:', error);
-            handleConnectionFailure('Connection error: ' + error.message);
+            console.error("❌ CONNECTION ERROR:", error);
+            showConnectionError(error.message);
         });
         
-        socket.on('connect_timeout', () => {
-            console.error('Connection timeout');
-            handleConnectionFailure('Connection timed out');
-        });
-        
-        // Handle server assignment of player ID
-        socket.on('playerId', (id) => {
-            console.log('Received player ID:', id);
-            playerId = id;
-        });
-        
-        // Handle new player joining
-        socket.on('newPlayer', (playerData) => {
-            console.log('New player joined:', playerData);
-            createOtherPlayer(playerData.id, playerData);
-        });
-        
-        // Handle player movement
-        socket.on('playerMoved', (playerData) => {
-            updateOtherPlayer(playerData.id, playerData);
-        });
-        
-        // Handle food updates
-        socket.on('foodUpdate', (foodData) => {
-            updateFood(foodData);
-        });
-        
-        // Handle player being killed
-        socket.on('playerKilled', (playerId) => {
-            if (playerId === socket.id) {
-                handleDeath();
-            } else {
-                removeOtherPlayer(playerId);
-            }
-        });
-        
-        // Handle player disconnection
-        socket.on('playerDisconnect', (playerId) => {
-            removeOtherPlayer(playerId);
-        });
-        
-        // Handle forced position (anti-cheat)
-        socket.on('forcePosition', (positionData) => {
-            if (player && player.segments && player.segments.length > 0) {
-                // Update player position to server's authoritative position
-                const head = player.segments[0];
-                head.mesh.position.set(positionData.x, positionData.y, 0);
-                head.x = positionData.x;
-                head.y = positionData.y;
-                
-                // Update camera position
-                camera.position.set(positionData.x, positionData.y, camera.position.z);
-            }
-        });
-        
-        // Receive initial game state
-        socket.on('gameState', (data) => {
-            // Initialize other players
-            for (const id in data.players) {
-                if (id !== socket.id) {
-                    createOtherPlayer(id, data.players[id]);
-                }
-            }
-            
-            // Initialize food
-            for (const foodItem of data.food) {
-                createFood(foodItem);
-            }
-        });
+        // Handle player events
+        setupPlayerEventHandlers();
         
     } catch (error) {
-        console.error('Error creating socket connection:', error);
-        handleConnectionFailure('Failed to create connection: ' + error.message);
+        console.error("❌ CRITICAL CONNECTION ERROR:", error);
+        showConnectionError(error.message);
+    }
+}
+
+// Set up all the player-related events from the server
+function setupPlayerEventHandlers() {
+    if (!socket) return;
+    
+    // New player joined
+    socket.on('newPlayer', (playerData) => {
+        console.log('New player joined:', playerData);
+        createOtherPlayer(playerData.id, playerData);
+    });
+    
+    // Player moved
+    socket.on('playerMoved', (playerData) => {
+        updateOtherPlayer(playerData.id, playerData);
+    });
+    
+    // Food update
+    socket.on('foodUpdate', (foodData) => {
+        console.log('Food update received:', foodData);
+        updateFood(foodData);
+    });
+    
+    // Player killed
+    socket.on('playerKilled', (playerId) => {
+        if (playerId === socket.id) {
+            handleDeath();
+        } else {
+            removeOtherPlayer(playerId);
+        }
+    });
+    
+    // Player disconnected
+    socket.on('playerDisconnect', (playerId) => {
+        removeOtherPlayer(playerId);
+    });
+    
+    // Force position (anti-cheat)
+    socket.on('forcePosition', (positionData) => {
+        if (player && player.segments && player.segments.length > 0) {
+            const head = player.segments[0];
+            head.mesh.position.set(positionData.x, positionData.y, 0);
+            head.x = positionData.x;
+            head.y = positionData.y;
+            camera.position.set(positionData.x, positionData.y, camera.position.z);
+        }
+    });
+    
+    // Initial game state
+    socket.on('gameState', (data) => {
+        console.log('Received initial game state:', data);
+        
+        // Initialize other players
+        for (const id in data.players) {
+            if (id !== socket.id) {
+                createOtherPlayer(id, data.players[id]);
+            }
+        }
+        
+        // Initialize food
+        for (const foodItem of data.food) {
+            createFood(foodItem);
+        }
+    });
+}
+
+// Show connection error and enable offline mode
+function showConnectionError(errorMsg) {
+    console.error(`Connection error: ${errorMsg}`);
+    
+    // Clear timeout if set
+    if (connectionTimeout) {
+        clearTimeout(connectionTimeout);
+        connectionTimeout = null;
     }
     
-    // Set a timeout for connection attempts
-    connectionTimeout = setTimeout(() => {
-        if (!isConnectedToServer) {
-            console.log('Connection attempt timed out');
-            handleConnectionFailure('Connection timed out');
-        }
-    }, 8000);
+    // Update state
+    isConnectedToServer = false;
+    isOfflineMode = true;
+    
+    // Create an error overlay
+    const errorEl = document.createElement('div');
+    errorEl.className = 'connection-error';
+    errorEl.innerHTML = `
+        <div class="error-content">
+            <i class="fas fa-exclamation-triangle"></i>
+            <h3>Could not connect to server</h3>
+            <p>${errorMsg}</p>
+            <p>Playing in offline mode instead.</p>
+            <button id="offline-continue">Continue in Offline Mode</button>
+        </div>
+    `;
+    document.body.appendChild(errorEl);
+    
+    // Update connection indicator
+    const connectionIndicator = document.getElementById('connection-indicator');
+    if (connectionIndicator) {
+        connectionIndicator.className = 'offline';
+        connectionIndicator.innerHTML = '<i class="fas fa-wifi-slash"></i> Offline Mode';
+    }
+    
+    // Hide loading screen
+    document.getElementById('loading-screen').style.display = 'none';
+    
+    // When continue button is clicked
+    document.getElementById('offline-continue').addEventListener('click', () => {
+        errorEl.style.display = 'none';
+        enableOfflineMode();
+    });
 }
 
 // New function to handle connection failures
