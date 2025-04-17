@@ -661,6 +661,21 @@ function connectToServer() {
     const serverUrl = window.SERVER_URL || 'https://slither-io-clone.onrender.com';
     console.log(`Attempting to connect to server at: ${serverUrl}`);
     
+    // Force the loading screen to disappear after 10 seconds no matter what
+    setTimeout(() => {
+        const loadingScreen = document.getElementById('loading-screen');
+        if (loadingScreen && loadingScreen.style.display !== 'none') {
+            console.log("Force-hiding loading screen after timeout");
+            loadingScreen.style.display = 'none';
+            
+            // If not connected, go to offline mode
+            if (!isConnectedToServer) {
+                console.log("Server connection timed out, enabling offline mode");
+                enableOfflineMode("Connection timed out");
+            }
+        }
+    }, 10000);
+    
     // Try to connect even if we're on the Render domain
     try {
         // Get or create connection indicator
@@ -680,14 +695,14 @@ function connectToServer() {
         // Create socket with explicit configuration
         console.log("Creating socket.io instance...");
         socket = io.connect(serverUrl, {
-            reconnectionAttempts: 5,
+            reconnectionAttempts: 3,
             reconnectionDelay: 1000,
-            timeout: 20000, // Increased timeout for slower connections
-            transports: ['polling', 'websocket'],
+            timeout: 5000, // Reduced timeout for faster fallback
+            transports: ['websocket', 'polling'], // Try websocket first
             forceNew: true,
             autoConnect: true,
             query: { 
-                clientVersion: '1.0.3', 
+                clientVersion: '1.0.4', 
                 origin: window.location.hostname,
                 timestamp: Date.now() // Add timestamp to prevent caching issues
             }
@@ -695,13 +710,17 @@ function connectToServer() {
 
         console.log("Socket.io instance created:", socket ? "success" : "failed");
         
-        // Set connection timeout - server must respond within 20 seconds
+        // Set connection timeout - server must respond within 10 seconds
         connectionTimeout = setTimeout(() => {
             if (!isConnectedToServer) {
-                console.error("Connection timed out after 20 seconds");
+                console.error("Connection timed out after 5 seconds");
                 showConnectionError("Connection timed out - server may be down");
+                
+                // Force offline mode
+                console.log("Enabling offline mode due to timeout");
+                enableOfflineMode("Connection timed out");
             }
-        }, 20000);
+        }, 5000);
         
         // Connection established
         socket.on('connect', () => {
@@ -756,6 +775,10 @@ function connectToServer() {
         socket.on('connect_error', (error) => {
             console.error("❌ CONNECTION ERROR:", error);
             showConnectionError("Connection error: " + error.message);
+            
+            // Force offline mode after connection error
+            console.log("Enabling offline mode after connection error");
+            enableOfflineMode("Connection error: " + error.message);
         });
         
         // Handle other events
@@ -764,6 +787,10 @@ function connectToServer() {
     } catch (error) {
         console.error("❌ CRITICAL CONNECTION ERROR:", error);
         showConnectionError("Critical error: " + error.message);
+        
+        // Force offline mode after critical error
+        console.log("Enabling offline mode after critical connection error");
+        enableOfflineMode("Critical connection error");
     }
 }
 
@@ -1198,63 +1225,75 @@ function clearAndRegenerateFood(count) {
 
 // Enable offline mode with a fallback experience
 function enableOfflineMode(reason) {
-    console.log(`Enabling offline mode: ${reason}`);
+    console.log("Enabling offline mode:", reason);
     
-    // Set flags
+    // Set offline mode flag
     offlineMode = true;
     isOfflineMode = true;
     isConnectedToServer = false;
     
-    // Generate offline food immediately
-    const foodCount = 200; // Reduced count but larger food items
-    clearAndRegenerateFood(foodCount);
-    
-    // Update connection indicator
+    // Update the connection indicator
     const connectionIndicator = document.getElementById('connection-indicator');
     if (connectionIndicator) {
         connectionIndicator.className = 'offline';
         connectionIndicator.innerHTML = '<i class="fas fa-wifi-slash"></i> Offline Mode';
     }
     
-    // Show an offline notice
-    const existingNotice = document.querySelector('.offline-notice');
-    if (existingNotice) {
-        existingNotice.remove();
+    // Update connection message
+    const connectionMessage = document.querySelector('.connection-message');
+    if (connectionMessage) {
+        connectionMessage.innerHTML = `Playing in offline mode (${reason}). You can still enjoy the game, but won't see other players.`;
     }
     
-    const offlineNotice = document.createElement('div');
-    offlineNotice.className = 'offline-notice';
-    offlineNotice.innerHTML = `
-        <div class="offline-content">
-            <i class="fas fa-wifi-slash"></i>
-            <h3>Offline Mode Active</h3>
-            <p>${reason}</p>
-            <p class="offline-description">Playing in single-player mode with AI snakes. For multiplayer, visit <a href="https://slither-io-clone.onrender.com" target="_blank">the game server directly</a>.</p>
-            <button id="offline-continue">Continue Playing</button>
-        </div>
-    `;
-    document.body.appendChild(offlineNotice);
-    
-    // When continue button is clicked
-    document.getElementById('offline-continue').addEventListener('click', () => {
-        offlineNotice.remove();
-        
-        // Create AI snakes for offline mode
-        for (let i = 0; i < 5; i++) {
-            createAISnake();
-        }
-        
-        // If player snake doesn't exist yet, create it
-        if (!player.segments || player.segments.length === 0) {
-            createPlayerSnake();
-        }
-    });
-    
-    // Hide loading screen
+    // Hide loading screen if it's still visible
     const loadingScreen = document.getElementById('loading-screen');
     if (loadingScreen) {
         loadingScreen.style.display = 'none';
     }
+    
+    // Check if player already exists, if not create one
+    if (!player.segments || player.segments.length === 0) {
+        console.log("Creating player for offline mode");
+        createPlayerSnake();
+    }
+    
+    // Generate food if none exists
+    console.log("Checking food for offline mode");
+    if (!foodItems || (Array.isArray(foodItems) && foodItems.length === 0) || 
+        (!Array.isArray(foodItems) && Object.keys(foodItems).length === 0)) {
+        console.log("Generating offline food");
+        clearAndRegenerateFood(200);
+    }
+    
+    // Create offline AI snakes for the player to interact with
+    clearAISnakes();
+    for (let i = 0; i < 5; i++) {
+        createAISnake();
+    }
+    
+    // Show a message to the user
+    const notification = document.createElement('div');
+    notification.className = 'notification';
+    notification.innerHTML = `
+        <div class="notification-content">
+            <h3>Offline Mode Activated</h3>
+            <p>${reason}</p>
+            <p>You can still play, but won't see other players.</p>
+        </div>
+    `;
+    document.body.appendChild(notification);
+    
+    // Remove the notification after 5 seconds
+    setTimeout(() => {
+        notification.classList.add('fade-out');
+        setTimeout(() => {
+            if (notification.parentNode) {
+                notification.parentNode.removeChild(notification);
+            }
+        }, 1000);
+    }, 5000);
+    
+    console.log("Offline mode enabled successfully");
 }
 
 // Clear any existing AI snakes

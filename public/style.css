@@ -650,4 +650,55 @@ canvas {
 
 #toggle-music i {
     margin-right: 8px;
+}
+
+/* Add notification styles */
+.notification {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background-color: rgba(0, 0, 0, 0.8);
+    color: #fff;
+    padding: 15px;
+    border-radius: 5px;
+    z-index: 1000;
+    box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+    border: 1px solid #00ff00;
+    animation: notification-appear 0.5s ease-out;
+    max-width: 300px;
+}
+
+.notification-content {
+    text-align: center;
+}
+
+.notification-content h3 {
+    margin-top: 0;
+    color: #ff3333;
+}
+
+.notification.fade-out {
+    animation: notification-disappear 1s ease-out forwards;
+}
+
+@keyframes notification-appear {
+    from {
+        opacity: 0;
+        transform: translateX(50px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+@keyframes notification-disappear {
+    from {
+        opacity: 1;
+        transform: translateX(0);
+    }
+    to {
+        opacity: 0;
+        transform: translateX(50px);
+    }
 } 
