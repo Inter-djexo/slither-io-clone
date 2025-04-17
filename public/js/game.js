@@ -91,6 +91,12 @@ function checkFoodCollisions() {
 // Initialize the game
 function init() {
     try {
+        // Check if already initialized to prevent duplicate initialization
+        if (window.gameInitialized) {
+            console.log("Game already initialized, skipping initialization");
+            return;
+        }
+        
         console.log("Initializing game...");
         
         // Don't try to auto-start music - will use buttons instead
@@ -116,6 +122,9 @@ function init() {
         
         // Hide game UI initially
         gameUI.style.display = 'none';
+        
+        // Mark as initialized to prevent duplicate initialization
+        window.gameInitialized = true;
         
         console.log("Game initialized successfully!");
     } catch (error) {
@@ -384,21 +393,43 @@ function addDecorations() {
 
 // Function to toggle music playback
 function toggleMusic() {
-    if (musicPlaying) {
-        backgroundMusic.pause();
-        toggleMusicButton.innerHTML = '<i class="fas fa-music"></i> Toggle Cosmic Sounds';
-        musicPlaying = false;
-    } else {
-        backgroundMusic.volume = 0.3;
-        backgroundMusic.play()
-            .then(() => {
+    console.log("Toggle music called. Current state:", musicPlaying);
+    try {
+        if (musicPlaying) {
+            backgroundMusic.pause();
+            toggleMusicButton.innerHTML = '<i class="fas fa-music"></i> Toggle Cosmic Sounds';
+            musicPlaying = false;
+            console.log("Music paused successfully");
+        } else {
+            // Make sure the music is loaded before trying to play
+            backgroundMusic.load();
+            backgroundMusic.volume = 0.3;
+            
+            // Use a promise with timeout to handle potential playback issues
+            const playPromise = backgroundMusic.play();
+            
+            if (playPromise !== undefined) {
+                playPromise.then(() => {
+                    toggleMusicButton.innerHTML = '<i class="fas fa-volume-mute"></i> Stop Cosmic Sounds';
+                    musicPlaying = true;
+                    console.log("Music started successfully");
+                }).catch(e => {
+                    console.error("Audio play failed:", e);
+                    alert("Couldn't play music. Please interact with the page first before trying again.");
+                    // Reset the button state since playback failed
+                    toggleMusicButton.innerHTML = '<i class="fas fa-music"></i> Toggle Cosmic Sounds';
+                    musicPlaying = false;
+                });
+            } else {
+                // Fallback for browsers that don't return a promise
                 toggleMusicButton.innerHTML = '<i class="fas fa-volume-mute"></i> Stop Cosmic Sounds';
                 musicPlaying = true;
-            })
-            .catch(e => {
-                console.log("Audio play failed:", e);
-                alert("Couldn't play music. Please try again after interacting with the page.");
-            });
+                console.log("Music started (non-promise mode)");
+            }
+        }
+    } catch (error) {
+        console.error("Error in toggleMusic function:", error);
+        alert("An error occurred with audio playback. Please try again.");
     }
 }
 

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cosmic Snake - Multiplayer Slither.io Clone</title>
     <link rel="stylesheet" href="style.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css" integrity="sha512-z3gLpd7yknf1YoNbCzqRKc4qyor8gaKU1qmn+CShxbuBusANI9QpRohGBreCFkKxLhei6S9CQXFEbbKuqLg0DA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
 </head>
 <body>
     <div id="game-container"></div>
@@ -61,7 +61,7 @@
     
     <!-- Audio elements -->
     <audio id="death-sound" src="https://assets.codepen.io/21542/howler-push.mp3" preload="auto"></audio>
-    <audio id="background-music" src="tranquillity.mp3" loop preload="auto"></audio>
+    <audio id="background-music" src="tranquillity.mp3" loop preload="none"></audio>
     
     <!-- Libraries -->
     <script src="libs/three.min.js"></script>
@@ -72,10 +72,16 @@
     
     <!-- Initialize game after page loads -->
     <script>
+        // Single initialization flag
+        let gameInitialized = false;
+        
         // Immediate check for offline mode to avoid spinner getting stuck
         window.addEventListener('DOMContentLoaded', function() {
             // Skip waiting for server connection on non-localhost domains
-            if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+            if (window.location.hostname !== 'localhost' && 
+                window.location.hostname !== '127.0.0.1' && 
+                !gameInitialized) {
+                
                 // Wait a moment to ensure DOM is fully loaded
                 setTimeout(function() {
                     const loadingScreen = document.getElementById('loading-screen');
@@ -85,6 +91,7 @@
                         // If loading screen is still visible, force offline mode
                         if (typeof enableOfflineMode === 'function') {
                             enableOfflineMode("Automatically activating offline mode");
+                            gameInitialized = true;
                         } else {
                             // If function not available yet, hide the loading screen directly
                             loadingScreen.style.display = 'none';
@@ -106,7 +113,10 @@
                             document.getElementById('forced-offline-continue').addEventListener('click', function() {
                                 notice.style.display = 'none';
                                 // Initialize game if not already initialized
-                                if (typeof init === 'function') init();
+                                if (typeof init === 'function' && !gameInitialized) {
+                                    init();
+                                    gameInitialized = true;
+                                }
                             });
                         }
                     }
@@ -114,9 +124,13 @@
             }
         });
         
+        // Initialize only once when window loads
         window.addEventListener('load', function() {
-            // Initialize the game
-            init();
+            if (!gameInitialized) {
+                // Initialize the game
+                init();
+                gameInitialized = true;
+            }
         });
     </script>
 </body>
