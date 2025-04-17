@@ -68,6 +68,14 @@ io.on('connection', (socket) => {
     console.log(`Connection from: ${origin} - IP: ${ip} - Socket ID: ${socket.id}`);
     console.log('Headers:', JSON.stringify(socket.handshake.headers));
     
+    // Tell the client about their socket ID immediately
+    socket.emit('yourId', socket.id);
+    
+    // Log all active players
+    const activePlayers = Object.keys(players).length;
+    console.log(`Active players: ${activePlayers} before this connection`);
+    console.log('Active player IDs:', Object.keys(players));
+    
     // Rate limiting for connections
     const now = Date.now();
     
@@ -115,16 +123,24 @@ io.on('connection', (socket) => {
             score: 0
         };
         
-        // Notify all clients about new player
-        socket.broadcast.emit('newPlayer', players[socket.id]);
+        // Log the created player
+        console.log(`Created player:`, players[socket.id]);
+        
+        // Notify all clients about new player - BROADCAST to all INCLUDING sender
+        io.emit('newPlayer', players[socket.id]);
+        console.log(`Broadcast newPlayer to all clients for player ${socket.id}`);
         
         // Send all existing players and food to new player
-        socket.emit('gameState', {
+        const gameState = {
             players,
             food
-        });
+        };
         
-        console.log(`Sent game state to ${socket.id} with ${Object.keys(players).length} players and ${food.length} food items`);
+        // Log the gameState being sent
+        console.log(`Sending gameState to ${socket.id} with ${Object.keys(players).length} players and ${food.length} food items`);
+        console.log(`Players in gameState:`, Object.keys(gameState.players));
+        
+        socket.emit('gameState', gameState);
     });
     
     // Player movement
@@ -163,6 +179,26 @@ io.on('connection', (socket) => {
                 x: players[socket.id].x,
                 y: players[socket.id].y
             });
+        }
+    });
+    
+    // Player explicitly wants a list of all players
+    socket.on('getPlayers', () => {
+        console.log(`Player ${socket.id} requested player list`);
+        socket.emit('playerList', players);
+    });
+    
+    // Heartbeat to keep connection alive and ensure all players are displayed
+    socket.on('heartbeat', () => {
+        // Send current player count
+        socket.emit('playerCount', Object.keys(players).length);
+        
+        // Every 10 seconds, re-sync all players to ensure client has everyone
+        const now = Date.now();
+        if (!socket.lastSync || now - socket.lastSync > 10000) {
+            socket.lastSync = now;
+            socket.emit('syncPlayers', players);
+            console.log(`Sent player sync to ${socket.id}`);
         }
     });
     
@@ -279,6 +315,10 @@ io.on('connection', (socket) => {
             // Remove player and notify all clients
             delete players[socket.id];
             io.emit('playerDisconnect', socket.id);
+            
+            // Log active players after disconnection
+            console.log(`Active players: ${Object.keys(players).length} after disconnect`);
+            console.log('Remaining player IDs:', Object.keys(players));
         }
         
         // Clean up action counter

@@ -608,14 +608,37 @@ function connectToServer() {
 function setupPlayerEventHandlers() {
     if (!socket) return;
     
+    // Store your own player ID
+    socket.on('yourId', (id) => {
+        console.log('Received my player ID:', id);
+        playerId = id;
+    });
+    
     // New player joined
     socket.on('newPlayer', (playerData) => {
         console.log('New player joined:', playerData);
-        createOtherPlayer(playerData.id, playerData);
+        
+        // Check if this player is yourself - don't create duplicate
+        if (playerData.id === socket.id) {
+            console.log('This is my own player data, not creating duplicate');
+            return;
+        }
+        
+        // Check if player already exists 
+        if (otherPlayers[playerData.id]) {
+            console.log('Player already exists, updating:', playerData.id);
+            updateOtherPlayer(playerData.id, playerData);
+        } else {
+            console.log('Creating new player:', playerData.id);
+            createOtherPlayer(playerData.id, playerData);
+        }
     });
     
     // Player moved
     socket.on('playerMoved', (playerData) => {
+        // Skip if it's our own player
+        if (playerData.id === socket.id) return;
+        
         updateOtherPlayer(playerData.id, playerData);
     });
     
@@ -636,6 +659,7 @@ function setupPlayerEventHandlers() {
     
     // Player disconnected
     socket.on('playerDisconnect', (playerId) => {
+        console.log('Player disconnected:', playerId);
         removeOtherPlayer(playerId);
     });
     
@@ -655,17 +679,176 @@ function setupPlayerEventHandlers() {
         console.log('Received initial game state:', data);
         
         // Initialize other players
-        for (const id in data.players) {
-            if (id !== socket.id) {
-                createOtherPlayer(id, data.players[id]);
+        if (data.players) {
+            console.log('Players in gameState:', Object.keys(data.players));
+            
+            for (const id in data.players) {
+                if (id !== socket.id) {
+                    console.log('Creating other player from gameState:', id);
+                    createOtherPlayer(id, data.players[id]);
+                }
             }
         }
         
         // Initialize food
-        for (const foodItem of data.food) {
-            createFood(foodItem);
+        if (data.food && data.food.length > 0) {
+            console.log(`Initializing ${data.food.length} food items`);
+            for (const foodItem of data.food) {
+                createFood(foodItem);
+            }
         }
     });
+    
+    // Receive player list (manual refresh)
+    socket.on('playerList', (players) => {
+        console.log('Received player list:', players);
+        syncOtherPlayers(players);
+    });
+    
+    // Receive player sync (periodic refresh)
+    socket.on('syncPlayers', (players) => {
+        console.log('Syncing players:', players);
+        syncOtherPlayers(players);
+    });
+    
+    // Player count update
+    socket.on('playerCount', (count) => {
+        console.log('Online players:', count);
+    });
+    
+    // Start the heartbeat
+    startHeartbeat();
+}
+
+// Synchronize other players with server data
+function syncOtherPlayers(serverPlayers) {
+    if (!serverPlayers) return;
+    
+    // Track players we've processed
+    const processedIds = new Set();
+    
+    // Add or update players from server
+    for (const id in serverPlayers) {
+        // Skip our own player
+        if (id === socket.id) continue;
+        
+        processedIds.add(id);
+        
+        // Update existing player or create new one
+        if (otherPlayers[id]) {
+            updateOtherPlayer(id, serverPlayers[id]);
+        } else {
+            createOtherPlayer(id, serverPlayers[id]);
+        }
+    }
+    
+    // Remove players that are in our list but not in server's list
+    for (const id in otherPlayers) {
+        if (!processedIds.has(id)) {
+            console.log(`Removing stale player: ${id}`);
+            removeOtherPlayer(id);
+        }
+    }
+}
+
+// Send heartbeat to server
+function startHeartbeat() {
+    // Clear any existing heartbeat
+    if (window.heartbeatInterval) {
+        clearInterval(window.heartbeatInterval);
+    }
+    
+    // Send heartbeat every 3 seconds
+    window.heartbeatInterval = setInterval(() => {
+        if (socket && socket.connected) {
+            socket.emit('heartbeat');
+            
+            // Every 10 seconds, request full player list
+            if (!window.lastFullSync || Date.now() - window.lastFullSync > 10000) {
+                window.lastFullSync = Date.now();
+                console.log("Requesting full player list");
+                socket.emit('getPlayers');
+            }
+        }
+    }, 3000);
+}
+
+// Update player function in the animation loop
+function updatePlayer(deltaTime) {
+    if (!controlsEnabled || player.segments.length === 0) return;
+    
+    // Calculate direction based on mouse position
+    const direction = new THREE.Vector2(
+        (mouse.x / window.innerWidth) * 2 - 1,
+        -(mouse.y / window.innerHeight) * 2 + 1
+    );
+    
+    // Normalize direction
+    direction.normalize();
+    
+    // Update head position
+    const head = player.segments[0];
+    const newX = head.x + direction.x * SNAKE_SPEED;
+    const newY = head.y + direction.y * SNAKE_SPEED;
+    
+    // Check if new position is within bounds
+    if (Math.abs(newX) < worldSize / 2 && Math.abs(newY) < worldSize / 2) {
+        head.x = newX;
+        head.y = newY;
+        head.mesh.position.set(head.x, head.y, 0);
+        
+        // Update name label position
+        if (head.nameLabel) {
+            head.nameLabel.position.set(head.x, head.y + 40, 0);
+        }
+    }
+    
+    // Update camera position to follow head
+    camera.position.set(head.x, head.y, camera.position.z);
+    
+    // Update tail segments
+    for (let i = 1; i < player.segments.length; i++) {
+        const segment = player.segments[i];
+        const prevSegment = player.segments[i - 1];
+        
+        // Direction to previous segment
+        const dx = prevSegment.x - segment.x;
+        const dy = prevSegment.y - segment.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        
+        // Only move if distance is greater than spacing
+        if (dist > SEGMENT_SPACING) {
+            const moveX = dx * (1 - SEGMENT_SPACING / dist);
+            const moveY = dy * (1 - SEGMENT_SPACING / dist);
+            
+            segment.x += moveX;
+            segment.y += moveY;
+            segment.mesh.position.set(segment.x, segment.y, 0);
+        }
+    }
+    
+    // Check for collisions with food
+    checkFoodCollisions();
+    
+    // Check for collisions with other players
+    checkPlayerCollisions();
+    
+    // Check for boundary crossing
+    checkBoundary();
+    
+    // Update the display of current length
+    updateScore();
+    
+    // Send position to server if online
+    if (socket && socket.connected && !offlineMode) {
+        socket.emit('playerUpdate', {
+            id: socket.id,
+            x: head.x,
+            y: head.y,
+            size: player.size,
+            segments: player.segments.map(s => ({ x: s.x, y: s.y }))
+        });
+    }
 }
 
 // Show connection error and enable offline mode
@@ -2101,67 +2284,6 @@ function updateMinimap() {
         minimapContext.beginPath();
         minimapContext.arc(minimapX, minimapY, 5, 0, Math.PI * 2);
         minimapContext.stroke();
-    }
-}
-
-// Update player position for online mode
-function updatePlayer(deltaTime) {
-    if (player.segments.length === 0) {
-        createPlayerSnake();
-        return;
-    }
-    
-    // Calculate direction based on mouse position
-    const direction = new THREE.Vector3(mouse.x, mouse.y, 0).normalize();
-    
-    // Calculate new position - scale by deltaTime for consistent speed if provided
-    const speed = deltaTime ? SNAKE_SPEED * 60 * deltaTime : SNAKE_SPEED; // Adjust for 60fps equivalent
-    const head = player.segments[0];
-    const newX = head.x + direction.x * speed;
-    const newY = head.y + direction.y * speed;
-    
-    // Update head position
-    head.mesh.position.set(newX, newY, 0);
-    head.x = newX;
-    head.y = newY;
-    
-    // Update camera position to follow player
-    camera.position.set(newX, newY, camera.position.z);
-    
-    // Update tail segments
-    for (let i = player.segments.length - 1; i > 0; i--) {
-        const segment = player.segments[i];
-        const target = player.segments[i - 1];
-        
-        // Calculate direction to target
-        const dx = target.x - segment.x;
-        const dy = target.y - segment.y;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-        
-        // Only move if segment is too far from target
-        if (distance > SEGMENT_SPACING) {
-            const moveX = dx * (distance - SEGMENT_SPACING) / distance;
-            const moveY = dy * (distance - SEGMENT_SPACING) / distance;
-            
-            segment.x += moveX;
-            segment.y += moveY;
-            segment.mesh.position.set(segment.x, segment.y, 0);
-        }
-    }
-    
-    // Only send position to server if in online mode
-    if (!offlineMode && socket) {
-        const segments = player.segments.slice(1).map(segment => ({
-            x: segment.x,
-            y: segment.y
-        }));
-        
-        socket.emit('playerMovement', {
-            x: head.x,
-            y: head.y,
-            size: player.size,
-            segments: segments
-        });
     }
 }
 
