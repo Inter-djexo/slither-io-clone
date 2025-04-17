@@ -68,6 +68,48 @@
     
     <!-- Initialize game after page loads -->
     <script>
+        // Immediate check for offline mode to avoid spinner getting stuck
+        window.addEventListener('DOMContentLoaded', function() {
+            // Skip waiting for server connection on non-localhost domains
+            if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+                // Wait a moment to ensure DOM is fully loaded
+                setTimeout(function() {
+                    const loadingScreen = document.getElementById('loading-screen');
+                    if (loadingScreen && loadingScreen.style.display !== 'none') {
+                        console.log("Forcing offline mode via direct check");
+                        
+                        // If loading screen is still visible, force offline mode
+                        if (typeof enableOfflineMode === 'function') {
+                            enableOfflineMode("Automatically activating offline mode");
+                        } else {
+                            // If function not available yet, hide the loading screen directly
+                            loadingScreen.style.display = 'none';
+                            
+                            // Add our own offline mode notice
+                            const notice = document.createElement('div');
+                            notice.className = 'offline-notice';
+                            notice.innerHTML = `
+                                <div class="offline-content">
+                                    <i class="fas fa-wifi-slash"></i>
+                                    <h3>Offline Mode Active</h3>
+                                    <p>Game will start in offline mode</p>
+                                    <button id="forced-offline-continue">Start Playing</button>
+                                </div>
+                            `;
+                            document.body.appendChild(notice);
+                            
+                            // Start game when user clicks button
+                            document.getElementById('forced-offline-continue').addEventListener('click', function() {
+                                notice.style.display = 'none';
+                                // Initialize game if not already initialized
+                                if (typeof init === 'function') init();
+                            });
+                        }
+                    }
+                }, 1000); // Wait 1 second before checking
+            }
+        });
+        
         window.addEventListener('load', function() {
             // Initialize the game
             init();

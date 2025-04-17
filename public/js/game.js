@@ -472,17 +472,17 @@ function connectToServer() {
             return;
         }
         
-        // For Netlify domain, immediately use offline mode to avoid endless spinner
-        if (window.location.hostname.indexOf('netlify.app') !== -1) {
-            console.log("Netlify domain detected. Using offline mode for better experience.");
-            enableOfflineMode("Playing on Netlify domain");
+        // Force offline mode for all non-localhost domains to avoid endless spinner
+        if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+            console.log("Remote domain detected. Using offline mode for better experience.");
+            enableOfflineMode("Remote hosting detected");
             return;
         }
         
-        // Add a shorter timeout to hide the loading screen if connection takes too long
+        // Add a very short timeout to hide the loading screen if connection takes too long
         const connectionTimeout = setTimeout(() => {
             enableOfflineMode("Connection to server timed out.");
-        }, 8000); // Reduce timeout to 8 seconds for better user experience
+        }, 3000); // Very short timeout for better user experience
         
         // Determine server URL based on environment (local vs production)
         const isProduction = window.location.hostname.indexOf('netlify.app') !== -1 || 
