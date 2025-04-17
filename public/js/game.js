@@ -2470,3 +2470,62 @@ window.addEventListener('DOMContentLoaded', function() {
         }, 500);
     }
 }); 
+
+// Add the checkFoodCollisions function
+function checkFoodCollisions() {
+    if (!player.segments || player.segments.length === 0) return;
+    
+    const headX = player.segments[0].x;
+    const headY = player.segments[0].y;
+    
+    // Array-like object handling for both array and object formats of foodItems
+    const foodArray = Array.isArray(foodItems) ? foodItems : Object.values(foodItems);
+    
+    for (let i = foodArray.length - 1; i >= 0; i--) {
+        const food = foodArray[i];
+        if (!food || !food.mesh) continue;
+        
+        const distance = Math.sqrt(
+            Math.pow(headX - food.x, 2) + 
+            Math.pow(headY - food.y, 2)
+        );
+        
+        // Check if distance is less than sum of snake head size and food size
+        if (distance < player.size + (food.size || 10)) {
+            // Player ate food
+            
+            // Increase player size and add segment
+            player.size += 1;
+            player.score += 10;
+            
+            // Update score display
+            updateScore();
+            
+            // Add segment if not at max
+            if (player.segments.length < MAX_SEGMENTS) {
+                addSegment();
+            }
+            
+            // If online mode, tell server about eaten food
+            if (socket && socket.connected && !offlineMode) {
+                socket.emit('eatFood', food.id);
+            } else {
+                // Remove food locally in offline mode
+                scene.remove(food.mesh);
+                
+                // Remove from foodItems array/object
+                if (Array.isArray(foodItems)) {
+                    foodItems.splice(i, 1);
+                } else {
+                    delete foodItems[food.id];
+                }
+                
+                // Generate new food in offline mode
+                if (offlineMode) {
+                    const newFood = generateOfflineFood(1)[0];
+                    createFood(newFood);
+                }
+            }
+        }
+    }
+} 
