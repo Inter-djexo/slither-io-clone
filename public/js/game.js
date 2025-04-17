@@ -508,63 +508,55 @@ function connectToServer() {
             connectionIndicator.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Checking connection...';
         }
         
-        // Determine server URL based on environment (local vs production)
-        let serverUrl;
+        // Always use the same server URL regardless of domain
+        // This ensures both netlify and render domains connect to the same server
+        const serverUrl = "https://slither-io-clone.onrender.com";
+        console.log(`Connecting to central game server at: ${serverUrl}`);
         
-        // Direct mode - if we're on Render.com, we should be able to use multiplayer
-        if (window.location.hostname === 'slither-io-clone.onrender.com' || 
-            window.location.hostname === 'localhost' || 
-            window.location.hostname === '127.0.0.1') {
+        // Set a connection timeout
+        const connectionTimeout = setTimeout(() => {
+            console.log("Connection to server timed out");
+            enableOfflineMode("Connection to multiplayer server timed out");
+        }, 5000);
+        
+        // Connect to Socket.io server
+        socket = io(serverUrl, {
+            reconnectionAttempts: 3,
+            timeout: 5000,
+            transports: ['websocket', 'polling']
+        });
+        
+        // Handle connection success
+        socket.on('connect', () => {
+            console.log('Connected to server successfully');
+            clearTimeout(connectionTimeout);
+            document.getElementById('loading-screen').style.display = 'none';
             
-            serverUrl = window.location.origin;
-            console.log(`Using direct connection to server at: ${serverUrl}`);
-            
-            // Try to connect without falling back to offline mode
-            socket = io(serverUrl, {
-                reconnectionAttempts: 5,
-                timeout: 8000,
-                transports: ['websocket', 'polling']
-            });
-            
-            // Handle connection success
-            socket.on('connect', () => {
-                console.log('Connected to server successfully');
-                document.getElementById('loading-screen').style.display = 'none';
+            // Update connection indicator
+            if (connectionIndicator) {
+                connectionIndicator.className = 'online';
+                connectionIndicator.innerHTML = '<i class="fas fa-wifi"></i> Multiplayer Mode';
                 
-                // Update connection indicator
-                if (connectionIndicator) {
-                    connectionIndicator.className = 'online';
-                    connectionIndicator.innerHTML = '<i class="fas fa-wifi"></i> Multiplayer Mode';
-                    
-                    const connectionMessage = document.querySelector('.connection-message');
-                    if (connectionMessage) {
-                        connectionMessage.innerHTML = "You're connected to the multiplayer server. Compete with other players!";
-                    }
+                const connectionMessage = document.querySelector('.connection-message');
+                if (connectionMessage) {
+                    connectionMessage.innerHTML = "You're connected to the multiplayer server. Compete with other players!";
                 }
-                
-                // Continue with game setup...
-                createPlayerSnake();
-                socket.emit('newPlayer', {
-                    name: player.name,
-                    color: player.color
-                });
-            });
+            }
             
-            // Handle connection error for direct connection
-            socket.on('connect_error', (error) => {
-                console.error('Socket.io connection error:', error);
-                enableOfflineMode("Server connection failed. Playing in offline mode.");
+            // Continue with game setup...
+            createPlayerSnake();
+            socket.emit('newPlayer', {
+                name: player.name,
+                color: player.color
             });
-            
-        } else {
-            // For all other domains (like Netlify), use offline mode immediately
-            console.log("Non-server domain detected. Using offline mode for better experience.");
-            enableOfflineMode("Remote hosting detected");
-            return;
-        }
+        });
         
-        // Rest of the Socket.io event handlers...
-        // ...
+        // Handle connection error
+        socket.on('connect_error', (error) => {
+            console.error('Socket.io connection error:', error);
+            clearTimeout(connectionTimeout);
+            enableOfflineMode("Could not connect to the multiplayer server.");
+        });
         
         // Handle new player joining
         socket.on('newPlayer', (playerData) => {
@@ -665,7 +657,7 @@ function enableOfflineMode(reason) {
             <i class="fas fa-wifi-slash"></i>
             <h3>Offline Mode Active</h3>
             <p>${reason}</p>
-            <p class="offline-description">You can still enjoy the game in single-player mode. For multiplayer, visit <a href="https://slither-io-clone.onrender.com" target="_blank">our server directly</a>.</p>
+            <p class="offline-description">You can still enjoy the game in single-player mode. For multiplayer with other players, visit <a href="https://slither-io-clone.onrender.com" target="_blank">the multiplayer server</a> directly.</p>
             <button id="offline-continue">Start Playing</button>
         </div>
     `;
