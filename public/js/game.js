@@ -954,6 +954,7 @@ function checkAICollisions() {
     
     const headX = player.segments[0].x;
     const headY = player.segments[0].y;
+    const headRadius = SEGMENT_SIZE;
     
     // Check collisions with AI segments
     for (const id in otherPlayers) {
@@ -967,11 +968,12 @@ function checkAICollisions() {
             const dx = headX - segment.x;
             const dy = headY - segment.y;
             const distanceSquared = dx * dx + dy * dy;
-            const collisionDistanceSquared = SEGMENT_SIZE * SEGMENT_SIZE * 2;
+            const collisionDistanceSquared = (headRadius + SEGMENT_SIZE) * (headRadius + SEGMENT_SIZE) * 0.7; // Slightly more forgiving collision
             
             if (distanceSquared < collisionDistanceSquared) {
                 // Collision detected, player dies
-                handleDeath();
+                console.log("Player collided with AI snake body segment - Game Over");
+                handleOfflineDeath();
                 return;
             }
         }
@@ -983,14 +985,16 @@ function checkAICollisions() {
             const dx = headX - aiHeadX;
             const dy = headY - aiHeadY;
             const distanceSquared = dx * dx + dy * dy;
-            const collisionDistanceSquared = SEGMENT_SIZE * SEGMENT_SIZE * 2;
+            const collisionDistanceSquared = (headRadius + SEGMENT_SIZE) * (headRadius + SEGMENT_SIZE) * 0.7;
             
             if (distanceSquared < collisionDistanceSquared) {
                 // Head-on collision - larger snake wins
                 if (player.size <= ai.size) {
-                    handleDeath();
+                    console.log("Player lost head-to-head collision with AI snake - Game Over");
+                    handleOfflineDeath();
                     return;
                 } else {
+                    console.log("Player won head-to-head collision with AI snake");
                     // We eat the AI snake
                     removeOtherPlayer(id);
                     
@@ -1012,6 +1016,45 @@ function checkAICollisions() {
             }
         }
     }
+}
+
+// Handle player death in offline mode
+function handleOfflineDeath() {
+    // Disable controls
+    controlsEnabled = false;
+    gameStarted = false;
+    
+    // Try to play death sound with better error handling
+    try {
+        deathSound.currentTime = 0;
+        // Use the promise-based approach with better error handling
+        deathSound.play()
+            .catch(e => console.log("Death sound playback failed:", e));
+    } catch (error) {
+        console.log("Audio error:", error);
+    }
+    
+    // Show death screen
+    finalLengthElement.textContent = player.size;
+    deathScreen.style.display = 'flex';
+    gameUI.style.display = 'none';
+    
+    // Remove player segments
+    for (const segment of player.segments) {
+        scene.remove(segment.mesh);
+    }
+    player.segments = [];
+    
+    // Clean up AI snakes
+    for (const id in otherPlayers) {
+        if (id.startsWith('ai-')) {
+            removeOtherPlayer(id);
+        }
+    }
+    
+    // Reset player data
+    player.size = 10;
+    player.score = 0;
 }
 
 // Time-based animation for smoother gameplay
@@ -1145,7 +1188,8 @@ function checkBoundaryOffline() {
     }
     
     if (distanceSquared > radiusSquared) {
-        handleDeath();
+        console.log("Player hit world boundary in offline mode - Game Over");
+        handleOfflineDeath();
     }
 }
 
