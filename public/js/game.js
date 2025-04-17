@@ -635,6 +635,12 @@ function enableOfflineMode(reason) {
     offlineMode = true;
     console.log("Enabling offline mode:", reason);
     
+    // Clear any existing players
+    for (const id in otherPlayers) {
+        removeOtherPlayer(id);
+    }
+    otherPlayers = {};
+    
     // Update connection indicator to show offline status
     const connectionIndicator = document.getElementById('connection-indicator');
     if (connectionIndicator) {
@@ -685,6 +691,12 @@ function enableOfflineMode(reason) {
 function startOfflineMode() {
     console.log("Starting offline mode (single player)");
     
+    // Clear any existing players first (including AI snakes)
+    for (const id in otherPlayers) {
+        removeOtherPlayer(id);
+    }
+    otherPlayers = {};
+    
     // Create player snake
     createPlayerSnake();
     
@@ -703,9 +715,6 @@ function startOfflineMode() {
         };
         createFood(food);
     }
-    
-    // Clear any existing AI snakes from previous games
-    clearAISnakes();
     
     // Enable controls
     controlsEnabled = true;
@@ -1021,12 +1030,11 @@ function handleOfflineDeath() {
     }
     player.segments = [];
     
-    // Clean up AI snakes
+    // Clear out all other players
     for (const id in otherPlayers) {
-        if (id.startsWith('ai-')) {
-            removeOtherPlayer(id);
-        }
+        removeOtherPlayer(id);
     }
+    otherPlayers = {};
     
     // Reset player data
     player.size = 10;
@@ -1533,6 +1541,12 @@ function handleDeath() {
         scene.remove(segment.mesh);
     }
     player.segments = [];
+    
+    // Clean out all other players
+    for (const id in otherPlayers) {
+        removeOtherPlayer(id);
+    }
+    otherPlayers = {};
     
     // Clean up socket connection to allow for proper restart
     if (socket && socket.connected) {
