@@ -1,409 +1,365 @@
 const express = require('express');
 const http = require('http');
-const socketIO = require('socket.io');
+const socketIo = require('socket.io');
 const path = require('path');
 const cors = require('cors');
 
+// Create Express app and HTTP server
 const app = express();
 const server = http.createServer(app);
 
-// More permissive CORS for production
-const io = socketIO(server, {
-  cors: {
-    origin: "*", // In production, restrict this to your Netlify domain
-    methods: ["GET", "POST"],
-    credentials: true,
-    allowedHeaders: ["content-type"]
-  }
-});
-
-// Enable CORS for all routes
+// Configure CORS for all domains
 app.use(cors({
-  origin: "*", // In production, restrict this to your Netlify domain
-  methods: "GET,HEAD,PUT,PATCH,POST,DELETE",
-  credentials: true,
-  preflightContinue: false,
-  optionsSuccessStatus: 204
+    origin: '*',
+    methods: ['GET', 'POST'],
+    credentials: true
 }));
 
-// Connection rate limiting - fine-tuned for production
-const connectionLimiter = {
-  connections: {},
-  maxConnections: 20,  // Increased for production
-  timeWindow: 60000,   // Per minute instead of 10 seconds
-  
-  // Check if IP has too many recent connections
-  checkLimit: function(ip) {
-    const now = Date.now();
-    
-    // Initialize connection tracking for IP
-    if (!this.connections[ip]) {
-      this.connections[ip] = [];
-    }
-    
-    // Clean up old connections
-    this.connections[ip] = this.connections[ip].filter(time => now - time < this.timeWindow);
-    
-    // Check if too many connections
-    if (this.connections[ip].length >= this.maxConnections) {
-      console.log(`Rate limit exceeded for IP: ${ip}`);
-      return false;
-    }
-    
-    // Add new connection time
-    this.connections[ip].push(now);
-    return true;
-  },
-  
-  // Clean up stale IPs every 10 minutes
-  startCleanupInterval: function() {
-    setInterval(() => {
-      const now = Date.now();
-      Object.keys(this.connections).forEach(ip => {
-        this.connections[ip] = this.connections[ip].filter(time => now - time < this.timeWindow);
-        if (this.connections[ip].length === 0) {
-          delete this.connections[ip];
-        }
-      });
-      console.log(`Cleaned up connection tracking. Active IPs: ${Object.keys(this.connections).length}`);
-    }, 600000); // 10 minutes
-  }
-};
-
-// Player action rate limiting - more tolerant for production
-const actionRateLimits = {
-  players: {},
-  limits: {
-    movement: { count: 0, lastReset: Date.now(), max: 300, window: 1000 }, // More lenient (300/sec)
-    foodEat: { count: 0, lastReset: Date.now(), max: 30, window: 1000 },  // More lenient (30/sec)
-    kill: { count: 0, lastReset: Date.now(), max: 15, window: 1000 }      // More lenient (15/sec)
-  },
-  
-  // Reset counters if time window has passed
-  resetCounters: function(playerId, actionType) {
-    if (!this.players[playerId]) {
-      this.players[playerId] = JSON.parse(JSON.stringify(this.limits));
-    }
-    
-    const now = Date.now();
-    const limitData = this.players[playerId][actionType];
-    
-    if (now - limitData.lastReset > limitData.window) {
-      limitData.count = 0;
-      limitData.lastReset = now;
-    }
-  },
-  
-  // Check if action is within rate limits
-  checkLimit: function(playerId, actionType) {
-    if (!this.players[playerId]) {
-      this.players[playerId] = JSON.parse(JSON.stringify(this.limits));
-    }
-    
-    this.resetCounters(playerId, actionType);
-    
-    const limitData = this.players[playerId][actionType];
-    if (limitData.count >= limitData.max) {
-      console.log(`Rate limit exceeded for player ${playerId}, action: ${actionType}`);
-      return false;
-    }
-    
-    limitData.count++;
-    return true;
-  },
-  
-  // Remove player when they disconnect
-  removePlayer: function(playerId) {
-    delete this.players[playerId];
-  }
-};
-
-// Start the cleanup interval
-connectionLimiter.startCleanupInterval();
+// Set up Socket.IO with permissive CORS
+const io = socketIo(server, {
+    cors: {
+        origin: ["https://slither-io.netlify.app", "https://slither-io-clone.onrender.com", "http://localhost:48765"],
+        methods: ["GET", "POST"],
+        credentials: true,
+        allowedHeaders: ["my-custom-header"]
+    },
+    transports: ['websocket', 'polling']
+});
 
 // Serve static files
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Basic route for testing
-app.get('/test', (req, res) => {
-  res.send('Server is working!');
-});
-
-// Default route to serve index.html
-app.get('/', (req, res) => {
-  console.log('Root route accessed');
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-// Game state
+// Game state variables
 const players = {};
-const foods = {};
-const WORLD_SIZE = 10000;
-const FOOD_COUNT = 1000;
-const FOOD_SIZE = 5;
-const BASE_PLAYER_SIZE = 10;
-const MAX_VELOCITY = 100; // Increased from 5 to 20 - much faster allowed movement
-const MAX_SIZE_INCREASE_RATE = 50; // Maximum allowed size increase per second
+const food = [];
+const worldSize = 2000;
+const FOOD_COUNT = 300;
+const FOOD_SIZE = 15;
 
-// Generate random foods
+// Rate limiting
+const MAX_CONNECTIONS_PER_MINUTE = 100;
+const MAX_ACTIONS_PER_SECOND = 20;
+const connectionCount = {};
+const actionCount = {};
+
+// Create initial food
 for (let i = 0; i < FOOD_COUNT; i++) {
-  const foodId = 'food-' + Math.random().toString(36).substr(2, 9);
-  foods[foodId] = {
-    id: foodId,
-    x: Math.random() * WORLD_SIZE - WORLD_SIZE/2,
-    y: Math.random() * WORLD_SIZE - WORLD_SIZE/2,
-    size: FOOD_SIZE,
-    color: '#' + Math.floor(Math.random()*16777215).toString(16)
-  };
+    generateFood();
 }
 
-// Helper function to calculate distance between two points
-function calculateDistance(x1, y1, x2, y2) {
-  return Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2));
+// Socket.IO connection handling
+io.on('connection', (socket) => {
+    console.log('New player connected:', socket.id);
+    
+    // Log connection source for debugging
+    const origin = socket.handshake.headers.origin || 'Unknown Origin';
+    console.log(`Connection from: ${origin} - Socket ID: ${socket.id}`);
+    
+    // Rate limiting for connections
+    const ip = socket.handshake.address;
+    const now = Date.now();
+    
+    if (!connectionCount[ip]) {
+        connectionCount[ip] = [];
+    }
+    
+    // Clean old connection timestamps
+    connectionCount[ip] = connectionCount[ip].filter(time => now - time < 60000);
+    
+    // Add current connection
+    connectionCount[ip].push(now);
+    
+    // Check if too many connections from this IP
+    if (connectionCount[ip].length > MAX_CONNECTIONS_PER_MINUTE) {
+        console.log(`Rate limit exceeded for IP ${ip}. Disconnecting socket ${socket.id}`);
+        socket.disconnect(true);
+        return;
+    }
+    
+    // Initialize action counter for this socket
+    actionCount[socket.id] = {
+        lastCheck: now,
+        count: 0
+    };
+    
+    // New player joins
+    socket.on('newPlayer', (playerData) => {
+        // Validate player data
+        if (!playerData.name) {
+            playerData.name = 'Anonymous Snake';
+        }
+        
+        // Create new player
+        players[socket.id] = {
+            id: socket.id,
+            x: Math.random() * (worldSize / 2) - worldSize / 4,
+            y: Math.random() * (worldSize / 2) - worldSize / 4,
+            size: 30,
+            name: playerData.name.substring(0, 20), // Limit name length
+            color: playerData.color || '#' + Math.floor(Math.random() * 16777215).toString(16),
+            segments: [],
+            score: 0
+        };
+        
+        // Notify all clients about new player
+        socket.broadcast.emit('newPlayer', players[socket.id]);
+        
+        // Send all existing players and food to new player
+        socket.emit('gameState', {
+            players,
+            food
+        });
+    });
+    
+    // Player movement
+    socket.on('playerUpdate', (data) => {
+        // Rate limiting for actions
+        const now = Date.now();
+        
+        // Reset counter every second
+        if (now - actionCount[socket.id].lastCheck > 1000) {
+            actionCount[socket.id] = {
+                lastCheck: now,
+                count: 0
+            };
+        }
+        
+        // Increment and check the counter
+        actionCount[socket.id].count++;
+        
+        if (actionCount[socket.id].count > MAX_ACTIONS_PER_SECOND) {
+            console.log(`Action rate limit exceeded for socket ${socket.id}`);
+            return;
+        }
+        
+        // Update player data if valid
+        if (players[socket.id] && isValidMovement(players[socket.id], data)) {
+            players[socket.id].x = data.x;
+            players[socket.id].y = data.y;
+            players[socket.id].size = data.size;
+            players[socket.id].segments = data.segments || [];
+            
+            // Broadcast player movement to all other players
+            socket.broadcast.emit('playerMoved', players[socket.id]);
+        } else if (players[socket.id]) {
+            // Force client to use server position if invalid movement
+            socket.emit('forcePosition', {
+                x: players[socket.id].x,
+                y: players[socket.id].y
+            });
+        }
+    });
+    
+    // Player eats food
+    socket.on('eatFood', (foodId) => {
+        const foodIndex = food.findIndex(f => f.id === foodId);
+        
+        if (foodIndex !== -1 && players[socket.id]) {
+            const foodItem = food[foodIndex];
+            const player = players[socket.id];
+            
+            // Validate that player is close enough to the food
+            const distance = Math.sqrt(
+                Math.pow(player.x - foodItem.x, 2) +
+                Math.pow(player.y - foodItem.y, 2)
+            );
+            
+            // Allow eating if player is close enough to food
+            if (distance < player.size + foodItem.size) {
+                // Remove eaten food
+                food.splice(foodIndex, 1);
+                
+                // Increase player size
+                const newSize = Math.min(player.size + 1, 100); // Cap maximum size
+                
+                // If this is a valid size increase
+                if (newSize > player.size) {
+                    player.size = newSize;
+                    player.score += 10;
+                }
+                
+                // Generate new food
+                const newFood = generateFood();
+                
+                // Broadcast food update to all players
+                io.emit('foodUpdate', {
+                    removed: [foodId],
+                    added: [newFood]
+                });
+            } else {
+                console.log(`Player ${socket.id} tried to eat food too far away`);
+            }
+        }
+    });
+    
+    // Player collision (one player kills another)
+    socket.on('killPlayer', (targetId) => {
+        if (players[socket.id] && players[targetId]) {
+            const killer = players[socket.id];
+            const victim = players[targetId];
+            
+            // Validate that this is a legitimate kill
+            // Head of killer must be close to any part of victim
+            const distance = Math.sqrt(
+                Math.pow(killer.x - victim.x, 2) +
+                Math.pow(killer.y - victim.y, 2)
+            );
+            
+            if (distance < killer.size + victim.size) {
+                // Award points to killer
+                killer.score += 100 + Math.floor(victim.size);
+                killer.size = Math.min(killer.size + victim.size / 5, 100);
+                
+                // Distribute food where player died
+                const foodCount = Math.max(5, Math.floor(victim.size / 5));
+                const newFood = [];
+                
+                for (let i = 0; i < foodCount; i++) {
+                    const food = generateFoodAt(victim.x, victim.y, 100);
+                    newFood.push(food);
+                }
+                
+                // Broadcast player killed event
+                io.emit('playerKilled', targetId);
+                
+                // Remove player from game
+                delete players[targetId];
+                
+                // Broadcast new food items from dead player
+                io.emit('foodUpdate', {
+                    removed: [],
+                    added: newFood
+                });
+            } else {
+                console.log(`Invalid kill attempt: ${socket.id} -> ${targetId}, distance: ${distance}`);
+            }
+        }
+    });
+    
+    // Disconnect handling
+    socket.on('disconnect', () => {
+        console.log('Player disconnected:', socket.id);
+        
+        // Remove disconnected player
+        if (players[socket.id]) {
+            // Distribute some food where player disconnected
+            const player = players[socket.id];
+            const foodCount = Math.max(3, Math.floor(player.size / 10));
+            const newFood = [];
+            
+            for (let i = 0; i < foodCount; i++) {
+                const food = generateFoodAt(player.x, player.y, 50);
+                newFood.push(food);
+            }
+            
+            // Broadcast food update
+            if (newFood.length > 0) {
+                io.emit('foodUpdate', {
+                    removed: [],
+                    added: newFood
+                });
+            }
+            
+            // Remove player and notify all clients
+            delete players[socket.id];
+            io.emit('playerDisconnect', socket.id);
+        }
+        
+        // Clean up action counter
+        delete actionCount[socket.id];
+    });
+});
+
+// Generate random food
+function generateFood() {
+    const id = 'food-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
+    const x = (Math.random() * 2 - 1) * worldSize / 2;
+    const y = (Math.random() * 2 - 1) * worldSize / 2;
+    
+    const newFood = {
+        id,
+        x,
+        y,
+        size: FOOD_SIZE,
+        color: '#' + Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0')
+    };
+    
+    food.push(newFood);
+    return newFood;
 }
 
-// Helper to validate position is within world bounds
-function isWithinBounds(x, y) {
-  const buffer = 50; // Small buffer inside the boundary
-  return Math.abs(x) <= (WORLD_SIZE/2 - buffer) && Math.abs(y) <= (WORLD_SIZE/2 - buffer);
+// Generate food at specific location with some spread
+function generateFoodAt(x, y, spread) {
+    const id = 'food-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
+    const foodX = x + (Math.random() * 2 - 1) * spread;
+    const foodY = y + (Math.random() * 2 - 1) * spread;
+    
+    const newFood = {
+        id,
+        x: foodX,
+        y: foodY,
+        size: FOOD_SIZE,
+        color: '#' + Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0')
+    };
+    
+    food.push(newFood);
+    return newFood;
 }
 
 // Validate player movement
-function validateMovement(player, newX, newY) {
-  // Check if movement speed is reasonable
-  const distance = calculateDistance(player.x, player.y, newX, newY);
-  const timeSinceLastUpdate = player.lastUpdate ? (Date.now() - player.lastUpdate) / 1000 : 1;
-  
-  // Account for frame drops and network latency by increasing tolerance when time gap is larger
-  let speedMultiplier = 1.0;
-  if (timeSinceLastUpdate > 0.1) { // If more than 100ms since last update
-    // Increase allowed speed to account for gaps in updates
-    speedMultiplier = Math.min(3.0, timeSinceLastUpdate * 5); 
-  }
-  
-  const maxAllowedDistance = MAX_VELOCITY * timeSinceLastUpdate * speedMultiplier;
-  
-  // Only detect very excessive speed (10x the allowed maximum)
-  if (distance > maxAllowedDistance * 10.0) {
-    console.log(`Extreme speed detected for player ${player.id}: ${distance.toFixed(2)} units in ${timeSinceLastUpdate.toFixed(3)}s (max allowed: ${maxAllowedDistance.toFixed(2)})`);
-    return false;
-  }
-  
-  // Check if player is within world bounds
-  if (!isWithinBounds(newX, newY)) {
-    console.log(`Out of bounds movement detected for player ${player.id}: (${newX.toFixed(2)}, ${newY.toFixed(2)})`);
-    return false;
-  }
-  
-  return true;
+function isValidMovement(player, newData) {
+    // Basic checks for data integrity
+    if (!newData || typeof newData.x !== 'number' || typeof newData.y !== 'number') {
+        return false;
+    }
+    
+    // Check if position is within world bounds
+    if (Math.abs(newData.x) > worldSize/2 || Math.abs(newData.y) > worldSize/2) {
+        return false;
+    }
+    
+    // Check if player is trying to move too fast
+    if (player.x !== undefined && player.y !== undefined) {
+        const distance = Math.sqrt(
+            Math.pow(newData.x - player.x, 2) +
+            Math.pow(newData.y - player.y, 2)
+        );
+        
+        // Maximum allowed distance per update (can be adjusted)
+        const maxDistance = 30;
+        
+        if (distance > maxDistance) {
+            console.log(`Player ${player.id} moving too fast: ${distance} units`);
+            return false;
+        }
+    }
+    
+    // Check if player size is reasonable
+    if (newData.size > player.size + 5) {
+        console.log(`Player ${player.id} trying to increase size too quickly`);
+        return false;
+    }
+    
+    return true;
 }
 
-// Connection handler
-io.on('connection', (socket) => {
-  // Get client IP address
-  const clientIP = socket.handshake.headers['x-forwarded-for'] || socket.handshake.address;
-  
-  // Apply connection rate limiting
-  if (!connectionLimiter.checkLimit(clientIP)) {
-    console.log(`Blocking connection from rate-limited IP: ${clientIP}`);
-    socket.disconnect(true);
-    return;
-  }
-
-  console.log('New player connected:', socket.id);
-
-  // Send existing players and foods
-  socket.emit('currentPlayers', players);
-  socket.emit('foodUpdate', Object.values(foods));
-
-  // Create a new player
-  players[socket.id] = {
-    id: socket.id,
-    x: Math.random() * 1000 - 500, // Spawn in center area
-    y: Math.random() * 1000 - 500,
-    size: BASE_PLAYER_SIZE,
-    color: '#' + Math.floor(Math.random()*16777215).toString(16),
-    lastUpdate: Date.now(),
-    lastSize: BASE_PLAYER_SIZE,
-    lastSizeUpdate: Date.now()
-  };
-
-  // Broadcast new player to all other players
-  socket.broadcast.emit('newPlayer', players[socket.id]);
-
-  // Handle player movement
-  socket.on('playerMovement', (movementData) => {
-    // Apply action rate limiting
-    if (!actionRateLimits.checkLimit(socket.id, 'movement')) {
-      // Force position if rate limited
-      socket.emit('forcePosition', {
-        x: players[socket.id].x,
-        y: players[socket.id].y
-      });
-      return;
-    }
-
-    const player = players[socket.id];
-    if (!player) return;
-
-    // Validate movement
-    if (!validateMovement(player, movementData.x, movementData.y)) {
-      // Send corrected position to client
-      socket.emit('forcePosition', {
-        x: player.x,
-        y: player.y
-      });
-      return;
-    }
-
-    // Update player position and timestamp
-    player.x = movementData.x;
-    player.y = movementData.y;
-    player.lastUpdate = Date.now();
-
-    // Broadcast movement to other players
-    socket.broadcast.emit('playerMoved', {
-      id: socket.id,
-      x: player.x,
-      y: player.y,
-      size: player.size
+// Handle custom routes
+app.get('/status', (req, res) => {
+    res.json({
+        status: 'online',
+        players: Object.keys(players).length,
+        food: food.length,
+        uptime: process.uptime()
     });
+});
 
-    // Check for food collisions
-    Object.values(foods).forEach(food => {
-      const distance = calculateDistance(player.x, player.y, food.x, food.y);
-      
-      // Player can eat food if distance is less than player size
-      if (distance < player.size) {
-        // Apply action rate limiting for eating
-        if (!actionRateLimits.checkLimit(socket.id, 'foodEat')) {
-          return;
-        }
-        
-        // Player eats food
-        delete foods[food.id];
-        
-        // Increase player size
-        const oldSize = player.size;
-        player.size += 1;
-        
-        // Detect unreasonable size increases
-        const timeSinceLastSizeUpdate = (Date.now() - player.lastSizeUpdate) / 1000;
-        const sizeIncreaseRate = (player.size - player.lastSize) / timeSinceLastSizeUpdate;
-        
-        if (sizeIncreaseRate > MAX_SIZE_INCREASE_RATE) {
-          console.log(`Possible size hack detected for player ${player.id}`);
-          player.size = player.lastSize; // Revert size
-          return;
-        }
-        
-        player.lastSize = player.size;
-        player.lastSizeUpdate = Date.now();
-        
-        // Broadcast player's new size
-        io.emit('updatePlayerSize', {
-          id: socket.id,
-          size: player.size
-        });
-        
-        // Broadcast food was eaten
-        io.emit('foodEaten', food.id);
-        
-        // Generate new food
-        const foodId = 'food-' + Math.random().toString(36).substr(2, 9);
-        foods[foodId] = {
-          id: foodId,
-          x: Math.random() * WORLD_SIZE - WORLD_SIZE/2,
-          y: Math.random() * WORLD_SIZE - WORLD_SIZE/2,
-          size: FOOD_SIZE,
-          color: '#' + Math.floor(Math.random()*16777215).toString(16)
-        };
-        
-        // Broadcast new food
-        io.emit('newFood', foods[foodId]);
-      }
-    });
-
-    // Check for player collisions
-    Object.values(players).forEach(otherPlayer => {
-      if (otherPlayer.id !== socket.id) {
-        const distance = calculateDistance(player.x, player.y, otherPlayer.x, otherPlayer.y);
-        
-        // Collision only if larger player's center touches smaller player
-        if (distance < Math.max(player.size, otherPlayer.size)) {
-          // Only larger player can eat smaller player, with a 20% size buffer
-          if (player.size > otherPlayer.size * 1.2) {
-            // Apply action rate limiting for kills
-            if (!actionRateLimits.checkLimit(socket.id, 'kill')) {
-              return;
-            }
-            
-            // Calculate how much size to add (50% of the eaten player's size)
-            const sizeBonus = otherPlayer.size * 0.5;
-            player.size += sizeBonus;
-            
-            // Broadcast updated size
-            io.emit('updatePlayerSize', {
-              id: socket.id,
-              size: player.size
-            });
-            
-            // Broadcast player elimination
-            io.emit('playerEaten', otherPlayer.id);
-            
-            // Drop food from eliminated player
-            const foodCount = Math.floor(otherPlayer.size / 2);
-            const foodDrops = [];
-            
-            for (let i = 0; i < foodCount; i++) {
-              const angle = Math.random() * Math.PI * 2;
-              const distance = Math.random() * otherPlayer.size * 2;
-              
-              const foodId = 'food-' + Math.random().toString(36).substr(2, 9);
-              const food = {
-                id: foodId,
-                x: otherPlayer.x + Math.cos(angle) * distance,
-                y: otherPlayer.y + Math.sin(angle) * distance,
-                size: FOOD_SIZE,
-                color: otherPlayer.color // Same color as eliminated player
-              };
-              
-              foods[foodId] = food;
-              foodDrops.push(food);
-            }
-            
-            if (foodDrops.length > 0) {
-              io.emit('newFoods', foodDrops);
-            }
-            
-            // Remove eaten player
-            delete players[otherPlayer.id];
-            
-            // Disconnect the eaten player
-            io.sockets.sockets.get(otherPlayer.id)?.disconnect();
-          }
-        }
-      }
-    });
-  });
-
-  // Handle disconnect
-  socket.on('disconnect', () => {
-    console.log('Player disconnected:', socket.id);
-    
-    // Clean up rate limiting data
-    actionRateLimits.removePlayer(socket.id);
-    
-    // Remove player
-    delete players[socket.id];
-    
-    // Broadcast player left
-    io.emit('playerDisconnect', socket.id);
-  });
+// Add a simple healthcheck endpoint
+app.get('/health', (req, res) => {
+    res.status(200).send('OK');
 });
 
 // Start server
 const PORT = process.env.PORT || 48765;
 server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+    console.log(`Server running on port ${PORT}`);
 }); 
