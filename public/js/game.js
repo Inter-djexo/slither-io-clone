@@ -500,10 +500,19 @@ function connectToServer() {
     console.log("Current hostname:", window.location.hostname);
     console.log("Current URL:", window.location.href);
     
+    // Determine the server URL based on the current environment
+    let serverUrl;
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+        // If running locally, connect to local server
+        serverUrl = 'http://localhost:48765';
+    } else {
+        // If on Netlify or anywhere else, connect to Render.com server
+        serverUrl = 'https://slither-io-clone.onrender.com';
+    }
+    
+    console.log(`Attempting to connect to server at: ${serverUrl}`);
+    
     try {
-        const serverUrl = 'https://slither-io-clone.onrender.com';
-        console.log(`Attempting to connect to server at: ${serverUrl}`);
-        
         // Get or create connection indicator
         const connectionIndicator = document.getElementById('connection-indicator');
         if (connectionIndicator) {
@@ -516,22 +525,22 @@ function connectToServer() {
         socket = io(serverUrl, {
             reconnectionAttempts: 5,
             reconnectionDelay: 1000,
-            timeout: 10000,
+            timeout: 15000, // Increased timeout for slower connections
             transports: ['polling', 'websocket'],
             forceNew: true,
             autoConnect: true,
-            query: { clientVersion: '1.0.1' }
+            query: { clientVersion: '1.0.2', origin: window.location.hostname }
         });
 
         console.log("Socket.io instance created, waiting for events...");
         
-        // Set connection timeout - server must respond within 10 seconds
+        // Set connection timeout - server must respond within 15 seconds
         connectionTimeout = setTimeout(() => {
             if (!isConnectedToServer) {
-                console.error("Connection timed out after 10 seconds");
+                console.error("Connection timed out after 15 seconds");
                 showConnectionError("Connection timed out");
             }
-        }, 10000);
+        }, 15000);
         
         // Log all socket events for debugging
         const events = [
@@ -559,6 +568,7 @@ function connectToServer() {
             // Update UI
             isConnectedToServer = true;
             isOfflineMode = false;
+            offlineMode = false;
             
             if (connectionIndicator) {
                 connectionIndicator.className = 'online';
@@ -566,10 +576,20 @@ function connectToServer() {
             }
             
             // Hide loading screen
-            document.getElementById('loading-screen').style.display = 'none';
+            const loadingScreen = document.getElementById('loading-screen');
+            if (loadingScreen) {
+                loadingScreen.style.display = 'none';
+            }
             
             // Continue with game setup
             console.log("Sending new player info to server...");
+            
+            // Create player snake if needed
+            if (!player.segments || player.segments.length === 0) {
+                createPlayerSnake();
+            }
+            
+            // Send player info to server
             socket.emit('newPlayer', {
                 name: playerName || 'Anonymous Snake',
                 color: playerColor
@@ -582,7 +602,7 @@ function connectToServer() {
             showConnectionError(error.message);
         });
         
-        // Handle player events
+        // Handle other events
         setupPlayerEventHandlers();
         
     } catch (error) {
@@ -734,28 +754,84 @@ function handleConnectionFailure(reason) {
 function enableOfflineMode(reason) {
     console.log(`Enabling offline mode: ${reason}`);
     
-    // Set offline flag
+    // Set flags
+    offlineMode = true;
     isOfflineMode = true;
     isConnectedToServer = false;
     
-    // If not playing yet, make offline food available
-    if (!isPlaying) {
-        // Generate initial offline food
-        for (let i = 0; i < 300; i++) {
-            generateOfflineFood();
+    // Generate offline food immediately
+    const foodCount = 300; // Increased food count for better experience
+    console.log(`Generating ${foodCount} food items for offline mode`);
+    
+    // Clear any existing food first
+    for (let i = 0; i < foodItems.length; i++) {
+        if (foodItems[i] && foodItems[i].mesh) {
+            scene.remove(foodItems[i].mesh);
         }
     }
+    foodItems = [];
     
-    // Update UI
+    // Generate new food for the offline experience
+    for (let i = 0; i < foodCount; i++) {
+        const foodId = 'offline-food-' + i;
+        const x = (Math.random() * 2 - 1) * worldSize / 2;
+        const y = (Math.random() * 2 - 1) * worldSize / 2;
+        const food = {
+            id: foodId,
+            x: x,
+            y: y,
+            size: FOOD_SIZE,
+            color: '#' + Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0')
+        };
+        createFood(food);
+    }
+    
+    // Update connection indicator
     const connectionIndicator = document.getElementById('connection-indicator');
     if (connectionIndicator) {
         connectionIndicator.className = 'offline';
         connectionIndicator.innerHTML = '<i class="fas fa-wifi-slash"></i> Offline Mode';
     }
     
+    // Show an offline notice
+    const existingNotice = document.querySelector('.offline-notice');
+    if (existingNotice) {
+        existingNotice.remove();
+    }
+    
+    const offlineNotice = document.createElement('div');
+    offlineNotice.className = 'offline-notice';
+    offlineNotice.innerHTML = `
+        <div class="offline-content">
+            <i class="fas fa-wifi-slash"></i>
+            <h3>Offline Mode Active</h3>
+            <p>${reason}</p>
+            <p class="offline-description">Playing in single-player mode with AI snakes. For multiplayer, visit <a href="https://slither-io-clone.onrender.com" target="_blank">the game server directly</a>.</p>
+            <button id="offline-continue">Continue Playing</button>
+        </div>
+    `;
+    document.body.appendChild(offlineNotice);
+    
+    // When continue button is clicked
+    document.getElementById('offline-continue').addEventListener('click', () => {
+        offlineNotice.remove();
+        
+        // Create AI snakes for offline mode
+        for (let i = 0; i < 5; i++) {
+            createAISnake();
+        }
+        
+        // If player snake doesn't exist yet, create it
+        if (!player.segments || player.segments.length === 0) {
+            createPlayerSnake();
+        }
+    });
+    
     // Hide loading screen
     const loadingScreen = document.getElementById('loading-screen');
-    if (loadingScreen) loadingScreen.style.display = 'none';
+    if (loadingScreen) {
+        loadingScreen.style.display = 'none';
+    }
 }
 
 // Clear any existing AI snakes
