@@ -491,75 +491,82 @@ function startGame() {
 
 // Connect to Socket.io server
 function connectToServer() {
+    // Use the deployed server URL directly
+    const serverUrl = 'https://slither-io-clone.onrender.com';
+    console.log(`Attempting to connect to server: ${serverUrl}`);
+    
     try {
-        console.log("Attempting to connect to server...");
-        
-        // Check if io is available
-        if (typeof io === 'undefined') {
-            console.error("Socket.io is not loaded!");
-            enableOfflineMode("Could not load Socket.io library.");
-            return;
-        }
-        
-        // Update connection indicator UI
-        const connectionIndicator = document.getElementById('connection-indicator');
-        if (connectionIndicator) {
-            connectionIndicator.className = 'checking';
-            connectionIndicator.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Checking connection...';
-        }
-        
-        // Always use the same server URL regardless of domain
-        // This ensures both netlify and render domains connect to the same server
-        const serverUrl = "https://slither-io-clone.onrender.com";
-        console.log(`Connecting to central game server at: ${serverUrl}`);
-        
-        // Set a connection timeout
-        const connectionTimeout = setTimeout(() => {
-            console.log("Connection to server timed out");
-            enableOfflineMode("Connection to multiplayer server timed out");
-        }, 5000);
-        
-        // Connect to Socket.io server
+        // Improved Socket.IO connection with debugging options
         socket = io(serverUrl, {
+            timeout: 8000,
             reconnectionAttempts: 3,
-            timeout: 5000,
-            transports: ['websocket', 'polling']
+            forceNew: true,
+            transports: ['websocket', 'polling'],
+            debug: true,
+            query: {
+                clientVersion: '1.0.0'
+            }
         });
         
-        // Handle connection success
-        socket.on('connect', () => {
-            console.log('Connected to server successfully');
-            clearTimeout(connectionTimeout);
-            document.getElementById('loading-screen').style.display = 'none';
-            
-            // Update connection indicator
-            if (connectionIndicator) {
-                connectionIndicator.className = 'online';
-                connectionIndicator.innerHTML = '<i class="fas fa-wifi"></i> Multiplayer Mode';
-                
-                const connectionMessage = document.querySelector('.connection-message');
-                if (connectionMessage) {
-                    connectionMessage.innerHTML = "You're connected to the multiplayer server. Compete with other players!";
-                }
-            }
-            
-            // Continue with game setup...
-            createPlayerSnake();
-            socket.emit('newPlayer', {
-                name: player.name,
-                color: player.color
+        // Log all socket events for troubleshooting
+        const events = ['connect', 'disconnect', 'connect_error', 'error', 'reconnect', 'reconnect_attempt', 'reconnect_failed'];
+        events.forEach(event => {
+            socket.on(event, (...args) => {
+                console.log(`Socket.IO ${event} event:`, args);
             });
         });
         
-        // Handle connection error
+        socket.on('connect', () => {
+            console.log('Connected to server! Socket ID:', socket.id);
+            document.getElementById('connection-indicator').className = 'online';
+            document.getElementById('connection-indicator').innerHTML = '<i class="fas fa-wifi"></i> Online Mode';
+            document.querySelector('.connection-message').textContent = 'Connected to multiplayer server!';
+            
+            // Set connected flag
+            isConnectedToServer = true;
+            
+            // Hide loading screen if visible
+            const loadingScreen = document.getElementById('loading-screen');
+            if (loadingScreen) loadingScreen.style.display = 'none';
+            
+            // If already in the game, update server with current position
+            if (player && isPlaying) {
+                socket.emit('playerUpdate', {
+                    id: playerId,
+                    x: player.position.x,
+                    y: player.position.y,
+                    size: player.scale.x,
+                    name: playerName
+                });
+            } else {
+                // Continue with game setup
+                createPlayerSnake();
+                socket.emit('newPlayer', {
+                    name: playerName,
+                    color: playerColor
+                });
+            }
+        });
+        
         socket.on('connect_error', (error) => {
-            console.error('Socket.io connection error:', error);
-            clearTimeout(connectionTimeout);
-            enableOfflineMode("Could not connect to the multiplayer server.");
+            console.error('Connection error:', error);
+            handleConnectionFailure('Connection error: ' + error.message);
+        });
+        
+        socket.on('connect_timeout', () => {
+            console.error('Connection timeout');
+            handleConnectionFailure('Connection timed out');
+        });
+        
+        // Handle server assignment of player ID
+        socket.on('playerId', (id) => {
+            console.log('Received player ID:', id);
+            playerId = id;
         });
         
         // Handle new player joining
         socket.on('newPlayer', (playerData) => {
+            console.log('New player joined:', playerData);
             createOtherPlayer(playerData.id, playerData);
         });
         
@@ -589,7 +596,7 @@ function connectToServer() {
         
         // Handle forced position (anti-cheat)
         socket.on('forcePosition', (positionData) => {
-            if (player.segments.length > 0) {
+            if (player && player.segments && player.segments.length > 0) {
                 // Update player position to server's authoritative position
                 const head = player.segments[0];
                 head.mesh.position.set(positionData.x, positionData.y, 0);
@@ -617,23 +624,66 @@ function connectToServer() {
         });
         
     } catch (error) {
-        console.error('Error initializing Socket.io:', error);
-        enableOfflineMode("Error initializing game connection.");
+        console.error('Error creating socket connection:', error);
+        handleConnectionFailure('Failed to create connection: ' + error.message);
     }
+    
+    // Set a timeout for connection attempts
+    connectionTimeout = setTimeout(() => {
+        if (!isConnectedToServer) {
+            console.log('Connection attempt timed out');
+            handleConnectionFailure('Connection timed out');
+        }
+    }, 8000);
+}
+
+// New function to handle connection failures
+function handleConnectionFailure(reason) {
+    console.warn(`Connection failure: ${reason}`);
+    
+    // Clear the timeout if it exists
+    if (connectionTimeout) {
+        clearTimeout(connectionTimeout);
+        connectionTimeout = null;
+    }
+    
+    // Update UI to show offline mode
+    const connectionIndicator = document.getElementById('connection-indicator');
+    if (connectionIndicator) {
+        connectionIndicator.className = 'offline';
+        connectionIndicator.innerHTML = '<i class="fas fa-wifi-slash"></i> Offline Mode';
+    }
+    
+    const connectionMessage = document.querySelector('.connection-message');
+    if (connectionMessage) {
+        connectionMessage.innerHTML = `You're playing in offline mode (${reason}). To play multiplayer with other players, visit <a href="${serverUrl}" target="_blank">the multiplayer server</a> directly.`;
+    }
+    
+    // Enable offline mode
+    enableOfflineMode(reason);
+    
+    // Hide loading screen if visible
+    const loadingScreen = document.getElementById('loading-screen');
+    if (loadingScreen) loadingScreen.style.display = 'none';
 }
 
 // Enable offline mode with a fallback experience
 function enableOfflineMode(reason) {
-    offlineMode = true;
-    console.log("Enabling offline mode:", reason);
+    console.log(`Enabling offline mode: ${reason}`);
     
-    // Clear any existing players
-    for (const id in otherPlayers) {
-        removeOtherPlayer(id);
+    // Set offline flag
+    isOfflineMode = true;
+    isConnectedToServer = false;
+    
+    // If not playing yet, make offline food available
+    if (!isPlaying) {
+        // Generate initial offline food
+        for (let i = 0; i < 300; i++) {
+            generateOfflineFood();
+        }
     }
-    otherPlayers = {};
     
-    // Update connection indicator to show offline status
+    // Update UI
     const connectionIndicator = document.getElementById('connection-indicator');
     if (connectionIndicator) {
         connectionIndicator.className = 'offline';
@@ -641,82 +691,8 @@ function enableOfflineMode(reason) {
     }
     
     // Hide loading screen
-    document.getElementById('loading-screen').style.display = 'none';
-    
-    // Remove any existing offline notice first
-    const existingNotice = document.querySelector('.offline-notice');
-    if (existingNotice) {
-        existingNotice.remove();
-    }
-    
-    // Show a brief notice to the user
-    const offlineNotice = document.createElement('div');
-    offlineNotice.className = 'offline-notice';
-    offlineNotice.innerHTML = `
-        <div class="offline-content">
-            <i class="fas fa-wifi-slash"></i>
-            <h3>Offline Mode Active</h3>
-            <p>${reason}</p>
-            <p class="offline-description">You can still enjoy the game in single-player mode. For multiplayer with other players, visit <a href="https://slither-io-clone.onrender.com" target="_blank">the multiplayer server</a> directly.</p>
-            <button id="offline-continue">Start Playing</button>
-        </div>
-    `;
-    document.body.appendChild(offlineNotice);
-    
-    // When they click continue, remove the notice and start offline mode
-    document.getElementById('offline-continue').addEventListener('click', () => {
-        offlineNotice.style.display = 'none';
-        startOfflineMode();
-    });
-    
-    // Also allow pressing Enter to continue
-    document.addEventListener('keydown', function offlineEnterHandler(e) {
-        if (e.key === 'Enter' && offlineNotice.style.display !== 'none') {
-            offlineNotice.style.display = 'none';
-            startOfflineMode();
-            document.removeEventListener('keydown', offlineEnterHandler);
-        }
-    });
-}
-
-// Start a simplified offline game mode
-function startOfflineMode() {
-    console.log("Starting offline mode (single player)");
-    
-    // Clear any existing players first (including AI snakes)
-    for (const id in otherPlayers) {
-        removeOtherPlayer(id);
-    }
-    otherPlayers = {};
-    
-    // Create player snake
-    createPlayerSnake();
-    
-    // Generate some food for the offline experience - reduced amount for better performance
-    const foodCount = 150; // Increased from 100 since we have no AI snakes
-    for (let i = 0; i < foodCount; i++) {
-        const foodId = 'offline-food-' + i;
-        const x = (Math.random() * 2 - 1) * worldSize / 2;
-        const y = (Math.random() * 2 - 1) * worldSize / 2;
-        const food = {
-            id: foodId,
-            x: x,
-            y: y,
-            size: FOOD_SIZE,
-            color: '#' + Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0')
-        };
-        createFood(food);
-    }
-    
-    // Enable controls
-    controlsEnabled = true;
-    gameStarted = true;
-    
-    // Start the optimized offline loop
-    lastUpdateTime = Date.now();
-    
-    // Update leaderboard for offline mode
-    updateLeaderboardOffline();
+    const loadingScreen = document.getElementById('loading-screen');
+    if (loadingScreen) loadingScreen.style.display = 'none';
 }
 
 // Clear any existing AI snakes

@@ -21,8 +21,8 @@
             <button id="toggle-music"><i class="fas fa-music"></i> Toggle Cosmic Sounds</button>
         </div>
         <div class="connection-status">
-            <span id="connection-indicator" class="offline"><i class="fas fa-wifi-slash"></i> Offline Mode</span>
-            <p class="connection-message">You're playing in offline mode. To play multiplayer with other players, visit <a href="https://slither-io-clone.onrender.com" target="_blank">the multiplayer server</a> directly.</p>
+            <span id="connection-indicator" class="checking"><i class="fas fa-spinner fa-spin"></i> Checking connection...</span>
+            <p class="connection-message">Connecting to multiplayer server...</p>
         </div>
         <div class="game-instructions">
             <h4>How to Play</h4>
@@ -63,9 +63,9 @@
     <audio id="death-sound" src="https://assets.codepen.io/21542/howler-push.mp3" preload="auto"></audio>
     <audio id="background-music" src="tranquillity.mp3" loop preload="none"></audio>
     
-    <!-- Libraries -->
+    <!-- Libraries - Using specific Socket.IO version for compatibility -->
     <script src="libs/three.min.js"></script>
-    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js" integrity="sha384-7EyYLQZgWBi67fBtVxw60/OWl1kjsfrPFcaU0pp0nAh+i8FD068QogUvg85Ewy1k" crossorigin="anonymous"></script>
     
     <!-- Game scripts -->
     <script src="js/game.js"></script>
@@ -75,58 +75,77 @@
         // Single initialization flag
         let gameInitialized = false;
         
+        // Function to check if Socket.IO is properly loaded
+        function checkSocketIO() {
+            if (typeof io === 'undefined') {
+                console.error("Socket.IO failed to load properly");
+                return false;
+            }
+            console.log("Socket.IO loaded successfully");
+            return true;
+        }
+        
+        // Start offline mode with explanation
+        function startOfflineModeWithNotice(reason) {
+            console.log("Starting offline mode:", reason);
+            
+            const loadingScreen = document.getElementById('loading-screen');
+            if (loadingScreen) loadingScreen.style.display = 'none';
+            
+            // Update indicator if it exists
+            const connectionIndicator = document.getElementById('connection-indicator');
+            if (connectionIndicator) {
+                connectionIndicator.className = 'offline';
+                connectionIndicator.innerHTML = '<i class="fas fa-wifi-slash"></i> Offline Mode';
+            }
+            
+            // Update connection message
+            const connectionMessage = document.querySelector('.connection-message');
+            if (connectionMessage) {
+                connectionMessage.innerHTML = "You're playing in offline mode. To play multiplayer with other players, visit <a href='https://slither-io-clone.onrender.com' target='_blank'>the multiplayer server</a> directly.";
+            }
+            
+            // Initialize game if function exists and game not yet initialized
+            if (typeof init === 'function' && !gameInitialized) {
+                init();
+                gameInitialized = true;
+                
+                // If enableOfflineMode exists, call it after init
+                if (typeof enableOfflineMode === 'function') {
+                    setTimeout(() => {
+                        enableOfflineMode(reason);
+                    }, 1000);
+                }
+            }
+        }
+        
         // Immediate check for offline mode to avoid spinner getting stuck
         window.addEventListener('DOMContentLoaded', function() {
-            // Skip waiting for server connection on non-localhost domains
-            if (window.location.hostname !== 'localhost' && 
-                window.location.hostname !== '127.0.0.1' && 
-                !gameInitialized) {
-                
-                // Wait a moment to ensure DOM is fully loaded
-                setTimeout(function() {
-                    const loadingScreen = document.getElementById('loading-screen');
-                    if (loadingScreen && loadingScreen.style.display !== 'none') {
-                        console.log("Forcing offline mode via direct check");
-                        
-                        // If loading screen is still visible, force offline mode
-                        if (typeof enableOfflineMode === 'function') {
-                            enableOfflineMode("Automatically activating offline mode");
-                            gameInitialized = true;
-                        } else {
-                            // If function not available yet, hide the loading screen directly
-                            loadingScreen.style.display = 'none';
-                            
-                            // Add our own offline mode notice
-                            const notice = document.createElement('div');
-                            notice.className = 'offline-notice';
-                            notice.innerHTML = `
-                                <div class="offline-content">
-                                    <i class="fas fa-wifi-slash"></i>
-                                    <h3>Offline Mode Active</h3>
-                                    <p>Game will start in offline mode</p>
-                                    <button id="forced-offline-continue">Start Playing</button>
-                                </div>
-                            `;
-                            document.body.appendChild(notice);
-                            
-                            // Start game when user clicks button
-                            document.getElementById('forced-offline-continue').addEventListener('click', function() {
-                                notice.style.display = 'none';
-                                // Initialize game if not already initialized
-                                if (typeof init === 'function' && !gameInitialized) {
-                                    init();
-                                    gameInitialized = true;
-                                }
-                            });
-                        }
-                    }
-                }, 1000); // Wait 1 second before checking
+            // Verify Socket.IO is available
+            if (!checkSocketIO()) {
+                startOfflineModeWithNotice("Socket.IO library failed to load");
+                return;
             }
+            
+            // Set a timeout for server connection
+            setTimeout(function() {
+                const loadingScreen = document.getElementById('loading-screen');
+                if (loadingScreen && loadingScreen.style.display !== 'none') {
+                    console.log("Server connection timed out, switching to offline mode");
+                    startOfflineModeWithNotice("Server connection timed out");
+                }
+            }, 6000);
         });
         
         // Initialize only once when window loads
         window.addEventListener('load', function() {
             if (!gameInitialized) {
+                // Check Socket.IO again
+                if (!checkSocketIO()) {
+                    startOfflineModeWithNotice("Socket.IO library not available");
+                    return;
+                }
+                
                 // Initialize the game
                 init();
                 gameInitialized = true;
