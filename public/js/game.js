@@ -683,11 +683,14 @@ function enableOfflineMode(reason) {
 
 // Start a simplified offline game mode
 function startOfflineMode() {
+    console.log("Starting offline mode");
+    
     // Create player snake
     createPlayerSnake();
     
-    // Generate some food for the offline experience
-    for (let i = 0; i < 200; i++) {
+    // Generate some food for the offline experience - reduced amount for better performance
+    const foodCount = 100; // Reduced from 200
+    for (let i = 0; i < foodCount; i++) {
         const foodId = 'offline-food-' + i;
         const x = (Math.random() * 2 - 1) * worldSize / 2;
         const y = (Math.random() * 2 - 1) * worldSize / 2;
@@ -701,9 +704,517 @@ function startOfflineMode() {
         createFood(food);
     }
     
+    // Create a few AI snakes for the offline experience
+    const aiCount = 3;
+    for (let i = 0; i < aiCount; i++) {
+        createAISnake();
+    }
+    
     // Enable controls
     controlsEnabled = true;
     gameStarted = true;
+    
+    // Start the optimized offline loop
+    lastUpdateTime = Date.now();
+    
+    // Update leaderboard for offline mode
+    updateLeaderboardOffline();
+}
+
+// For offline mode - optimized food collision detection
+function checkFoodCollisionsOffline() {
+    if (player.segments.length === 0) return;
+    
+    const head = player.segments[0];
+    const headRadius = SEGMENT_SIZE;
+    const headX = head.x;
+    const headY = head.y;
+    
+    for (let i = 0; i < foodItems.length; i++) {
+        const food = foodItems[i];
+        // Use squared distance for performance (avoid square root)
+        const dx = headX - food.x;
+        const dy = headY - food.y;
+        const distanceSquared = dx * dx + dy * dy;
+        const collisionDistanceSquared = (headRadius + FOOD_SIZE) * (headRadius + FOOD_SIZE);
+        
+        if (distanceSquared < collisionDistanceSquared) {
+            // Remove the food
+            scene.remove(food.mesh);
+            foodItems.splice(i, 1);
+            i--;
+            
+            // Add segment to player
+            addSegment();
+            
+            // Update score
+            player.size += 1;
+            updateScore();
+            
+            // Generate new food - away from player for better gameplay
+            const angle = Math.random() * Math.PI * 2;
+            const distance = Math.random() * worldSize / 3 + worldSize / 6; // Between 1/6 and 1/2 of world radius
+            const foodId = 'offline-food-' + Math.random().toString(36).substr(2, 9);
+            const x = Math.cos(angle) * distance;
+            const y = Math.sin(angle) * distance;
+            const newFood = {
+                id: foodId,
+                x: x,
+                y: y,
+                size: FOOD_SIZE,
+                color: '#' + Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0'),
+                colorCycle: Math.random() > 0.8 // Only 20% of food items cycle colors for performance
+            };
+            createFood(newFood);
+        }
+    }
+}
+
+// Create simplified AI snakes for offline mode
+function createAISnake() {
+    const id = 'ai-' + Math.floor(Math.random() * 1000);
+    const aiX = (Math.random() * 2 - 1) * worldSize / 3; // Spawn in center third
+    const aiY = (Math.random() * 2 - 1) * worldSize / 3;
+    const aiSize = 10 + Math.floor(Math.random() * 20); // Size between 10-30
+    const aiColor = '#' + Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0');
+    const aiName = 'AI Snake ' + Math.floor(Math.random() * 100);
+    
+    otherPlayers[id] = {
+        id: id,
+        name: aiName,
+        segments: [],
+        color: aiColor,
+        size: aiSize,
+        // AI properties
+        target: {
+            x: Math.random() * worldSize - worldSize/2,
+            y: Math.random() * worldSize - worldSize/2
+        },
+        changeTargetCounter: 0,
+        speed: 1 + Math.random() * 1.5 // Random speed
+    };
+    
+    // Create head
+    const headGeometry = new THREE.CircleGeometry(SEGMENT_SIZE, 32);
+    const headMaterial = new THREE.MeshBasicMaterial({ color: aiColor });
+    const head = new THREE.Mesh(headGeometry, headMaterial);
+    head.position.set(aiX, aiY, 0);
+    scene.add(head);
+    
+    // Add name label
+    const nameLabel = createNameLabel(aiName, aiColor);
+    head.add(nameLabel);
+    
+    otherPlayers[id].segments.push({ mesh: head, x: aiX, y: aiY });
+    
+    // Create a few segments
+    const segmentCount = Math.floor(aiSize / 3);
+    for (let i = 0; i < segmentCount; i++) {
+        addSegmentToOtherPlayer(id, aiX, aiY);
+    }
+    
+    return id;
+}
+
+// Update AI snakes in offline mode
+function updateAISnakes() {
+    for (const id in otherPlayers) {
+        if (!id.startsWith('ai-')) continue;
+        
+        const ai = otherPlayers[id];
+        if (ai.segments.length === 0) continue;
+        
+        // Occasionally change target
+        ai.changeTargetCounter++;
+        if (ai.changeTargetCounter > 100 + Math.random() * 200) {
+            ai.changeTargetCounter = 0;
+            
+            // 80% chance to target food, 20% chance to move randomly
+            if (Math.random() < 0.8 && foodItems.length > 0) {
+                // Find nearest food
+                let nearestFood = null;
+                let minDistance = Infinity;
+                
+                for (const food of foodItems) {
+                    const dx = ai.segments[0].x - food.x;
+                    const dy = ai.segments[0].y - food.y;
+                    const distanceSquared = dx * dx + dy * dy;
+                    
+                    if (distanceSquared < minDistance) {
+                        minDistance = distanceSquared;
+                        nearestFood = food;
+                    }
+                }
+                
+                if (nearestFood) {
+                    ai.target.x = nearestFood.x;
+                    ai.target.y = nearestFood.y;
+                }
+            } else {
+                // Random movement within bounds
+                const angle = Math.random() * Math.PI * 2;
+                const distance = Math.random() * worldSize / 3;
+                ai.target.x = Math.cos(angle) * distance;
+                ai.target.y = Math.sin(angle) * distance;
+            }
+        }
+        
+        // Move toward target
+        const dx = ai.target.x - ai.segments[0].x;
+        const dy = ai.target.y - ai.segments[0].y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        
+        if (distance > 10) {
+            const newX = ai.segments[0].x + (dx / distance) * ai.speed;
+            const newY = ai.segments[0].y + (dy / distance) * ai.speed;
+            
+            // Check world boundary
+            const distanceFromCenter = Math.sqrt(newX * newX + newY * newY);
+            if (distanceFromCenter < worldSize / 2 - 100) {
+                // Update head position
+                ai.segments[0].mesh.position.set(newX, newY, 0);
+                ai.segments[0].x = newX;
+                ai.segments[0].y = newY;
+                
+                // Update segment positions
+                for (let i = ai.segments.length - 1; i > 0; i--) {
+                    const segment = ai.segments[i];
+                    const target = ai.segments[i - 1];
+                    
+                    // Calculate direction to target
+                    const segDx = target.x - segment.x;
+                    const segDy = target.y - segment.y;
+                    const segDistance = Math.sqrt(segDx * segDx + segDy * segDy);
+                    
+                    // Only move if segment is too far from target
+                    if (segDistance > SEGMENT_SPACING) {
+                        const moveX = segDx * (segDistance - SEGMENT_SPACING) / segDistance;
+                        const moveY = segDy * (segDistance - SEGMENT_SPACING) / segDistance;
+                        
+                        segment.x += moveX;
+                        segment.y += moveY;
+                        segment.mesh.position.set(segment.x, segment.y, 0);
+                    }
+                }
+            } else {
+                // Too close to boundary, change target
+                ai.changeTargetCounter = 100;
+            }
+        }
+    }
+}
+
+// Add offline-specific leaderboard updates
+function updateLeaderboardOffline() {
+    // Clear current list
+    leadersList.innerHTML = '';
+    
+    // Build leaderboard data
+    const leaders = [];
+    
+    // Add local player
+    leaders.push({
+        name: player.name || 'You',
+        score: player.size,
+        isLocal: true
+    });
+    
+    // Add AI players
+    for (const id in otherPlayers) {
+        if (id.startsWith('ai-')) {
+            leaders.push({
+                name: otherPlayers[id].name,
+                score: otherPlayers[id].size,
+                isLocal: false
+            });
+        }
+    }
+    
+    // Sort by score (descending)
+    leaders.sort((a, b) => b.score - a.score);
+    
+    // Display top 10
+    const topLeaders = leaders.slice(0, 10);
+    for (const leader of topLeaders) {
+        const li = document.createElement('li');
+        li.innerHTML = `<span>${leader.name}</span><span>${leader.score}</span>`;
+        
+        if (leader.isLocal) {
+            li.style.color = '#00ff00';
+            li.style.fontWeight = 'bold';
+        }
+        
+        leadersList.appendChild(li);
+    }
+}
+
+// Check collision with AI snakes in offline mode
+function checkAICollisions() {
+    if (player.segments.length === 0) return;
+    
+    const headX = player.segments[0].x;
+    const headY = player.segments[0].y;
+    
+    // Check collisions with AI segments
+    for (const id in otherPlayers) {
+        if (!id.startsWith('ai-')) continue;
+        
+        const ai = otherPlayers[id];
+        
+        // Skip first segment (head)
+        for (let i = 1; i < ai.segments.length; i++) {
+            const segment = ai.segments[i];
+            const dx = headX - segment.x;
+            const dy = headY - segment.y;
+            const distanceSquared = dx * dx + dy * dy;
+            const collisionDistanceSquared = SEGMENT_SIZE * SEGMENT_SIZE * 2;
+            
+            if (distanceSquared < collisionDistanceSquared) {
+                // Collision detected, player dies
+                handleDeath();
+                return;
+            }
+        }
+        
+        // Check head-to-head collision
+        if (ai.segments.length > 0) {
+            const aiHeadX = ai.segments[0].x;
+            const aiHeadY = ai.segments[0].y;
+            const dx = headX - aiHeadX;
+            const dy = headY - aiHeadY;
+            const distanceSquared = dx * dx + dy * dy;
+            const collisionDistanceSquared = SEGMENT_SIZE * SEGMENT_SIZE * 2;
+            
+            if (distanceSquared < collisionDistanceSquared) {
+                // Head-on collision - larger snake wins
+                if (player.size <= ai.size) {
+                    handleDeath();
+                    return;
+                } else {
+                    // We eat the AI snake
+                    removeOtherPlayer(id);
+                    
+                    // We grow a bit
+                    player.size += Math.ceil(ai.size / 4);
+                    updateScore();
+                    
+                    if (player.segments.length < MAX_SEGMENTS) {
+                        addSegment();
+                    }
+                    
+                    // Create a new AI snake to replace the one we ate
+                    setTimeout(() => {
+                        if (offlineMode) {
+                            createAISnake();
+                        }
+                    }, 2000);
+                }
+            }
+        }
+    }
+}
+
+// Time-based animation for smoother gameplay
+let lastUpdateTime = 0;
+
+// Main game loop
+function animate(now) {
+    requestAnimationFrame(animate);
+    
+    // Calculate delta time for smoother animation
+    const deltaTime = (now - lastUpdateTime) / 1000; // In seconds
+    lastUpdateTime = now;
+    
+    // Skip if delta time is too large (tab was inactive)
+    if (deltaTime > 0.1) {
+        renderer.render(scene, camera);
+        return;
+    }
+    
+    // Update environment animations - less frequently in offline mode
+    if (!offlineMode || Math.random() < 0.3) { // Only run 30% of the time in offline mode
+        updateEnvironmentEffects(deltaTime);
+    }
+    
+    if (gameStarted && controlsEnabled) {
+        if (offlineMode) {
+            // Optimized offline mode updates
+            updatePlayerOffline(deltaTime);
+            checkFoodCollisionsOffline();
+            checkBoundaryOffline();
+            
+            // Update AI snakes
+            updateAISnakes();
+            checkAICollisions();
+            
+            // Less frequent updates for performance
+            if (now % 10 < 2) { // Update approximately every 10 frames
+                updateLeaderboardOffline();
+                updateMinimapOffline();
+            }
+        } else {
+            // Online mode updates
+            updatePlayer(deltaTime);
+            checkFoodCollisions();
+            checkPlayerCollisions();
+            checkBoundary();
+            updateLeaderboard();
+            updateMinimap();
+        }
+    }
+    
+    renderer.render(scene, camera);
+}
+
+// Optimized update player for offline mode
+function updatePlayerOffline(deltaTime) {
+    if (player.segments.length === 0) {
+        createPlayerSnake();
+        return;
+    }
+    
+    // Calculate direction based on mouse position
+    const direction = new THREE.Vector3(mouse.x, mouse.y, 0).normalize();
+    
+    // Calculate new position - scale by deltaTime for consistent speed
+    const speed = SNAKE_SPEED * 60 * deltaTime; // Adjust for 60fps equivalent
+    const head = player.segments[0];
+    const newX = head.x + direction.x * speed;
+    const newY = head.y + direction.y * speed;
+    
+    // Update head position
+    head.mesh.position.set(newX, newY, 0);
+    head.x = newX;
+    head.y = newY;
+    
+    // Update camera position to follow player
+    camera.position.set(newX, newY, camera.position.z);
+    
+    // Update tail segments - less frequently for performance in large snakes
+    const segmentUpdateInterval = Math.ceil(player.segments.length / 20); // Update fewer segments for longer snakes
+    
+    for (let i = player.segments.length - 1; i > 0; i--) {
+        // Skip some segments for performance in large snakes
+        if (player.segments.length > 20 && i % segmentUpdateInterval !== 0 && i !== 1) continue;
+        
+        const segment = player.segments[i];
+        const target = player.segments[i - 1];
+        
+        // Calculate direction to target
+        const dx = target.x - segment.x;
+        const dy = target.y - segment.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        
+        // Only move if segment is too far from target
+        if (distance > SEGMENT_SPACING) {
+            const moveX = dx * (distance - SEGMENT_SPACING) / distance;
+            const moveY = dy * (distance - SEGMENT_SPACING) / distance;
+            
+            segment.x += moveX;
+            segment.y += moveY;
+            segment.mesh.position.set(segment.x, segment.y, 0);
+        }
+    }
+}
+
+// Simplified boundary check for offline mode
+function checkBoundaryOffline() {
+    if (player.segments.length === 0) return;
+    
+    const headX = player.segments[0].x;
+    const headY = player.segments[0].y;
+    const distanceSquared = headX * headX + headY * headY;
+    const radiusSquared = (worldSize / 2) * (worldSize / 2);
+    
+    // Apply visual warning effect when close to boundary
+    if (distanceSquared > radiusSquared * 0.7) {
+        // Calculate how close we are to the boundary (0-1 range)
+        const proximityFactor = (Math.sqrt(distanceSquared) - Math.sqrt(radiusSquared * 0.7)) / (Math.sqrt(radiusSquared) * 0.3);
+        
+        // Make border lights pulse based on proximity (optimized - update fewer lights)
+        if (gameObjects.borderLights) {
+            const sampleSize = Math.ceil(gameObjects.borderLights.length / 4); // Only update 1/4 of lights at a time
+            for (let i = 0; i < sampleSize; i++) {
+                const index = Math.floor(Math.random() * gameObjects.borderLights.length);
+                const light = gameObjects.borderLights[index];
+                if (light) {
+                    light.intensity = 10 + proximityFactor * 20;
+                }
+            }
+        }
+    }
+    
+    if (distanceSquared > radiusSquared) {
+        handleDeath();
+    }
+}
+
+// Simplified minimap update for offline mode
+function updateMinimapOffline() {
+    if (!minimapContext) return;
+    
+    // Clear the minimap
+    minimapContext.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    minimapContext.fillRect(0, 0, minimapSize, minimapSize);
+    
+    // Draw boundary wall as a thick red ring
+    minimapContext.strokeStyle = '#ff0000';
+    minimapContext.lineWidth = 10;
+    minimapContext.beginPath();
+    minimapContext.arc(minimapSize / 2, minimapSize / 2, minimapSize / 2 - 10, 0, Math.PI * 2);
+    minimapContext.stroke();
+    
+    // Draw only a subset of food items for performance
+    const maxFoodToRender = 100;
+    const foodStep = Math.max(1, Math.floor(foodItems.length / maxFoodToRender));
+    
+    minimapContext.fillStyle = '#ffcc00';
+    for (let i = 0; i < foodItems.length; i += foodStep) {
+        const food = foodItems[i];
+        const minimapX = (food.x + worldSize / 2) * minimapScale;
+        const minimapY = (food.y + worldSize / 2) * minimapScale;
+        
+        minimapContext.beginPath();
+        minimapContext.arc(minimapX, minimapY, 1, 0, Math.PI * 2);
+        minimapContext.fill();
+    }
+    
+    // Draw AI snakes
+    for (const id in otherPlayers) {
+        if (!id.startsWith('ai-')) continue;
+        
+        const ai = otherPlayers[id];
+        if (ai.segments.length > 0) {
+            const head = ai.segments[0];
+            const minimapX = (head.x + worldSize / 2) * minimapScale;
+            const minimapY = (head.y + worldSize / 2) * minimapScale;
+            
+            minimapContext.fillStyle = ai.color;
+            minimapContext.beginPath();
+            minimapContext.arc(minimapX, minimapY, 3, 0, Math.PI * 2);
+            minimapContext.fill();
+        }
+    }
+    
+    // Draw player
+    if (player.segments.length > 0) {
+        const head = player.segments[0];
+        const minimapX = (head.x + worldSize / 2) * minimapScale;
+        const minimapY = (head.y + worldSize / 2) * minimapScale;
+        
+        // Draw player location with a larger dot
+        minimapContext.fillStyle = player.color;
+        minimapContext.beginPath();
+        minimapContext.arc(minimapX, minimapY, 5, 0, Math.PI * 2);
+        minimapContext.fill();
+        
+        // Add a white border
+        minimapContext.strokeStyle = '#ffffff';
+        minimapContext.lineWidth = 2;
+        minimapContext.beginPath();
+        minimapContext.arc(minimapX, minimapY, 5, 0, Math.PI * 2);
+        minimapContext.stroke();
+    }
 }
 
 // Create the player's snake with improved visuals
@@ -1266,85 +1777,8 @@ function addSegment() {
     });
 }
 
-// Main game loop
-function animate() {
-    requestAnimationFrame(animate);
-    
-    // Update environment animations
-    updateEnvironmentEffects();
-    
-    if (gameStarted && controlsEnabled) {
-        updatePlayer();
-        checkFoodCollisions();
-        checkPlayerCollisions();
-        checkBoundary();
-        updateLeaderboard();
-        updateMinimap();
-    }
-    
-    renderer.render(scene, camera);
-}
-
-// Update player position
-function updatePlayer() {
-    if (player.segments.length === 0) {
-        createPlayerSnake();
-        return;
-    }
-    
-    // Calculate direction based on mouse position
-    const direction = new THREE.Vector3(mouse.x, mouse.y, 0).normalize();
-    
-    // Calculate new position
-    const head = player.segments[0];
-    const newX = head.x + direction.x * SNAKE_SPEED;
-    const newY = head.y + direction.y * SNAKE_SPEED;
-    
-    // Update head position
-    head.mesh.position.set(newX, newY, 0);
-    head.x = newX;
-    head.y = newY;
-    
-    // Update camera position to follow player
-    camera.position.set(newX, newY, camera.position.z);
-    
-    // Update tail segments
-    for (let i = player.segments.length - 1; i > 0; i--) {
-        const segment = player.segments[i];
-        const target = player.segments[i - 1];
-        
-        // Calculate direction to target
-        const dx = target.x - segment.x;
-        const dy = target.y - segment.y;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-        
-        // Only move if segment is too far from target
-        if (distance > SEGMENT_SPACING) {
-            const moveX = dx * (distance - SEGMENT_SPACING) / distance;
-            const moveY = dy * (distance - SEGMENT_SPACING) / distance;
-            
-            segment.x += moveX;
-            segment.y += moveY;
-            segment.mesh.position.set(segment.x, segment.y, 0);
-        }
-    }
-    
-    // Send updated position to server
-    const segments = player.segments.slice(1).map(segment => ({
-        x: segment.x,
-        y: segment.y
-    }));
-    
-    socket.emit('playerMovement', {
-        x: head.x,
-        y: head.y,
-        size: player.size,
-        segments: segments
-    });
-}
-
 // Update the environment effects (animations, etc.)
-function updateEnvironmentEffects() {
+function updateEnvironmentEffects(deltaTime) {
     // Animate food items
     for (const food of foodItems) {
         if (food.mesh) {
@@ -1537,6 +1971,67 @@ function updateMinimap() {
         minimapContext.beginPath();
         minimapContext.arc(minimapX, minimapY, 5, 0, Math.PI * 2);
         minimapContext.stroke();
+    }
+}
+
+// Update player position for online mode
+function updatePlayer(deltaTime) {
+    if (player.segments.length === 0) {
+        createPlayerSnake();
+        return;
+    }
+    
+    // Calculate direction based on mouse position
+    const direction = new THREE.Vector3(mouse.x, mouse.y, 0).normalize();
+    
+    // Calculate new position - scale by deltaTime for consistent speed if provided
+    const speed = deltaTime ? SNAKE_SPEED * 60 * deltaTime : SNAKE_SPEED; // Adjust for 60fps equivalent
+    const head = player.segments[0];
+    const newX = head.x + direction.x * speed;
+    const newY = head.y + direction.y * speed;
+    
+    // Update head position
+    head.mesh.position.set(newX, newY, 0);
+    head.x = newX;
+    head.y = newY;
+    
+    // Update camera position to follow player
+    camera.position.set(newX, newY, camera.position.z);
+    
+    // Update tail segments
+    for (let i = player.segments.length - 1; i > 0; i--) {
+        const segment = player.segments[i];
+        const target = player.segments[i - 1];
+        
+        // Calculate direction to target
+        const dx = target.x - segment.x;
+        const dy = target.y - segment.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        
+        // Only move if segment is too far from target
+        if (distance > SEGMENT_SPACING) {
+            const moveX = dx * (distance - SEGMENT_SPACING) / distance;
+            const moveY = dy * (distance - SEGMENT_SPACING) / distance;
+            
+            segment.x += moveX;
+            segment.y += moveY;
+            segment.mesh.position.set(segment.x, segment.y, 0);
+        }
+    }
+    
+    // Only send position to server if in online mode
+    if (!offlineMode && socket) {
+        const segments = player.segments.slice(1).map(segment => ({
+            x: segment.x,
+            y: segment.y
+        }));
+        
+        socket.emit('playerMovement', {
+            x: head.x,
+            y: head.y,
+            size: player.size,
+            segments: segments
+        });
     }
 }
 
