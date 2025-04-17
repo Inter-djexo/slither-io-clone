@@ -493,68 +493,126 @@ canvas {
     left: 0;
     width: 100%;
     height: 100%;
-    background: rgba(0, 0, 0, 0.8);
+    background: rgba(0, 0, 0, 0.85);
     display: flex;
     justify-content: center;
     align-items: center;
-    z-index: 1000;
-    backdrop-filter: blur(10px);
+    z-index: 2000;
+    backdrop-filter: blur(15px);
+    animation: fadeIn 0.5s ease-in-out;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
 }
 
 .offline-content {
-    background: rgba(30, 30, 30, 0.9);
+    background: linear-gradient(145deg, rgba(40, 40, 40, 0.95), rgba(20, 20, 20, 0.95));
     border-radius: 20px;
-    padding: 30px;
+    padding: 35px;
     text-align: center;
     max-width: 500px;
-    border: 2px solid rgba(255, 50, 50, 0.6);
-    box-shadow: 0 0 30px rgba(255, 50, 50, 0.3);
+    border: 2px solid rgba(255, 100, 100, 0.7);
+    box-shadow: 0 0 40px rgba(255, 0, 0, 0.4), inset 0 0 20px rgba(255, 50, 50, 0.2);
+    transform: scale(0.95);
+    animation: popIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+}
+
+@keyframes popIn {
+    from { transform: scale(0.9); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
 }
 
 .offline-content i {
-    font-size: 50px;
+    font-size: 60px;
     color: #ff5555;
-    margin-bottom: 20px;
+    margin-bottom: 15px;
     display: block;
-    text-shadow: 0 0 15px rgba(255, 50, 50, 0.7);
+    text-shadow: 0 0 20px rgba(255, 50, 50, 0.9);
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.1); opacity: 0.8; }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+.offline-content h3 {
+    color: #ff5555;
+    font-size: 1.8rem;
+    margin-bottom: 15px;
+    text-shadow: 0 0 15px rgba(255, 85, 85, 0.8);
+    text-transform: uppercase;
+    letter-spacing: 2px;
 }
 
 .offline-content p {
     font-size: 18px;
     color: #fff;
-    margin-bottom: 25px;
+    margin-bottom: 15px;
     line-height: 1.5;
 }
 
+.offline-description {
+    color: #cccccc !important;
+    font-size: 16px !important;
+    margin: 15px 0 25px !important;
+    padding: 10px;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 10px;
+}
+
 .offline-content button {
-    background: linear-gradient(45deg, #ff3333, #ff5555);
+    background: linear-gradient(45deg, #ff3333, #ff7777);
     border: none;
     color: white;
-    padding: 12px 30px;
+    padding: 14px 35px;
     border-radius: 30px;
     font-size: 16px;
     cursor: pointer;
     transition: all 0.3s ease;
-    box-shadow: 0 0 15px rgba(255, 50, 50, 0.5);
+    box-shadow: 0 0 20px rgba(255, 50, 50, 0.5);
+    text-transform: uppercase;
+    font-weight: bold;
+    letter-spacing: 1px;
 }
 
 .offline-content button:hover {
-    transform: scale(1.05);
-    box-shadow: 0 0 20px rgba(255, 50, 50, 0.7);
+    transform: scale(1.05) translateY(-3px);
+    box-shadow: 0 5px 25px rgba(255, 50, 50, 0.7);
+}
+
+.offline-content button:active {
+    transform: scale(0.98) translateY(1px);
 }
 
 /* Responsive adjustments */
 @media (max-width: 600px) {
     .offline-content {
         width: 90%;
-        padding: 20px;
+        padding: 25px;
     }
     
     .offline-content i {
-        font-size: 40px;
+        font-size: 45px;
+    }
+    
+    .offline-content h3 {
+        font-size: 1.5rem;
     }
     
     .offline-content p {
         font-size: 16px;
+    }
+    
+    .offline-description {
+        font-size: 14px !important;
+    }
+    
+    .offline-content button {
+        padding: 12px 25px;
+        font-size: 14px;
     }
 } 

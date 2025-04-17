@@ -472,10 +472,17 @@ function connectToServer() {
             return;
         }
         
-        // Add a timeout to hide the loading screen if connection takes too long
+        // For Netlify domain, immediately use offline mode to avoid endless spinner
+        if (window.location.hostname.indexOf('netlify.app') !== -1) {
+            console.log("Netlify domain detected. Using offline mode for better experience.");
+            enableOfflineMode("Playing on Netlify domain");
+            return;
+        }
+        
+        // Add a shorter timeout to hide the loading screen if connection takes too long
         const connectionTimeout = setTimeout(() => {
             enableOfflineMode("Connection to server timed out.");
-        }, 15000); // 15 seconds timeout
+        }, 8000); // Reduce timeout to 8 seconds for better user experience
         
         // Determine server URL based on environment (local vs production)
         const isProduction = window.location.hostname.indexOf('netlify.app') !== -1 || 
@@ -492,8 +499,8 @@ function connectToServer() {
         
         // Connect to Socket.io server
         socket = io(serverUrl, {
-            reconnectionAttempts: 5,
-            timeout: 10000,
+            reconnectionAttempts: 3, // Reduce reconnection attempts for faster fallback
+            timeout: 5000, // Shorter timeout
             transports: ['websocket', 'polling']
         });
         
@@ -582,14 +589,22 @@ function enableOfflineMode(reason) {
     // Hide loading screen
     document.getElementById('loading-screen').style.display = 'none';
     
+    // Remove any existing offline notice first
+    const existingNotice = document.querySelector('.offline-notice');
+    if (existingNotice) {
+        existingNotice.remove();
+    }
+    
     // Show a brief notice to the user
     const offlineNotice = document.createElement('div');
     offlineNotice.className = 'offline-notice';
     offlineNotice.innerHTML = `
         <div class="offline-content">
             <i class="fas fa-wifi-slash"></i>
-            <p>Playing in offline mode: ${reason}</p>
-            <button id="offline-continue">Continue</button>
+            <h3>Offline Mode Active</h3>
+            <p>${reason}</p>
+            <p class="offline-description">You can still enjoy the game in single-player mode with no multiplayer features.</p>
+            <button id="offline-continue">Start Playing</button>
         </div>
     `;
     document.body.appendChild(offlineNotice);
@@ -598,6 +613,15 @@ function enableOfflineMode(reason) {
     document.getElementById('offline-continue').addEventListener('click', () => {
         offlineNotice.style.display = 'none';
         startOfflineMode();
+    });
+    
+    // Also allow pressing Enter to continue
+    document.addEventListener('keydown', function offlineEnterHandler(e) {
+        if (e.key === 'Enter' && offlineNotice.style.display !== 'none') {
+            offlineNotice.style.display = 'none';
+            startOfflineMode();
+            document.removeEventListener('keydown', offlineEnterHandler);
+        }
     });
 }
 
