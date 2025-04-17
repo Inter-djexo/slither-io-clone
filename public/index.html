@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cosmic Snake - Multiplayer Slither.io Clone</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+</head>
+<body>
+    <div id="game-container"></div>
+    
+    <!-- Game UI Elements -->
+    <div id="start-screen">
+        <h1>Cosmic Snake</h1>
+        <p class="tagline">Navigate the cosmos, consume nebula fragments, and become the largest snake in the universe!</p>
+        <input type="text" id="player-name" placeholder="Enter your cosmic name">
+        <button id="start-button"><i class="fas fa-rocket"></i> Launch Game</button>
+        <button id="skip-auth-button"><i class="fas fa-user-astronaut"></i> Play as Guest</button>
+        <div id="music-button">
+            <button id="toggle-music"><i class="fas fa-music"></i> Toggle Cosmic Sounds</button>
+        </div>
+        <div class="game-instructions">
+            <h4>How to Play</h4>
+            <ul>
+                <li><i class="fas fa-mouse-pointer"></i> Move your mouse to control direction</li>
+                <li><i class="fas fa-cookie-bite"></i> Collect glowing orbs to grow</li>
+                <li><i class="fas fa-skull"></i> Avoid colliding with other snakes</li>
+                <li><i class="fas fa-exclamation-triangle"></i> Stay within the red boundary</li>
+            </ul>
+        </div>
+    </div>
+    
+    <div id="death-screen">
+        <h2>Game Over</h2>
+        <p class="cosmic-death">Your cosmic journey has ended</p>
+        <p>Your final length: <span id="final-length">0</span></p>
+        <button id="restart-button"><i class="fas fa-redo"></i> Begin New Journey</button>
+    </div>
+    
+    <div id="game-ui">
+        <div id="stats">
+            <p><i class="fas fa-ruler"></i> Length: <span id="length">0</span></p>
+        </div>
+        <div id="leaderboard">
+            <h3><i class="fas fa-trophy"></i> Cosmic Leaders</h3>
+            <ol id="leaders"></ol>
+        </div>
+    </div>
+    
+    <div id="minimap-container"></div>
+    
+    <div id="loading-screen">
+        <div class="spinner"></div>
+        <p>Establishing cosmic connection...</p>
+    </div>
+    
+    <!-- Audio elements -->
+    <audio id="death-sound" src="https://assets.codepen.io/21542/howler-push.mp3" preload="auto"></audio>
+    <audio id="background-music" src="tranquillity.mp3" loop preload="auto"></audio>
+    
+    <!-- Libraries -->
+    <script src="libs/three.min.js"></script>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    
+    <!-- Game scripts -->
+    <script src="js/game.js"></script>
+    
+    <!-- Initialize game after page loads -->
+    <script>
+        window.addEventListener('load', function() {
+            // Initialize the game
+            init();
+        });
+    </script>
+</body>
+</html>

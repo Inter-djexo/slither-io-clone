@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Connection Test</title>
+</head>
+<body>
+    <h1>Connection Test</h1>
+    <p>If you can see this page, your server is working!</p>
+    <script>
+        // Basic connection test
+        fetch('/test')
+            .then(response => response.text())
+            .then(data => {
+                document.body.innerHTML += `<p>Server response: ${data}</p>`;
+            })
+            .catch(error => {
+                document.body.innerHTML += `<p>Error connecting to server: ${error.message}</p>`;
+            });
+    </script>
+</body>
+</html> 

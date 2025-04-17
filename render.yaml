@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: slither-io-clone-backend
+    env: node
+    buildCommand: npm install
+    startCommand: node server.js
+    plan: free
+    envVars:
+      - key: NODE_ENV
+        value: production
+    healthCheckPath: /test 
