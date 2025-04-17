@@ -500,18 +500,11 @@ function connectToServer() {
     console.log("Current hostname:", window.location.hostname);
     console.log("Current URL:", window.location.href);
     
-    // Determine the server URL based on the current environment
-    let serverUrl;
-    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-        // If running locally, connect to local server
-        serverUrl = 'http://localhost:48765';
-    } else {
-        // If on Netlify or anywhere else, connect to Render.com server
-        serverUrl = 'https://slither-io-clone.onrender.com';
-    }
-    
+    // Use the server URL defined in index.html or fall back to the render.com URL
+    const serverUrl = window.SERVER_URL || 'https://slither-io-clone.onrender.com';
     console.log(`Attempting to connect to server at: ${serverUrl}`);
     
+    // Try to connect even if we're on the Render domain
     try {
         // Get or create connection indicator
         const connectionIndicator = document.getElementById('connection-indicator');
@@ -520,39 +513,38 @@ function connectToServer() {
             connectionIndicator.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Connecting...';
         }
         
-        // Create socket with logging
+        // Remove any existing socket to prevent duplicates
+        if (socket) {
+            console.log("Cleaning up existing socket connection");
+            socket.disconnect();
+            socket = null;
+        }
+        
+        // Create socket with explicit configuration
         console.log("Creating socket.io instance...");
-        socket = io(serverUrl, {
+        socket = io.connect(serverUrl, {
             reconnectionAttempts: 5,
             reconnectionDelay: 1000,
-            timeout: 15000, // Increased timeout for slower connections
+            timeout: 20000, // Increased timeout for slower connections
             transports: ['polling', 'websocket'],
             forceNew: true,
             autoConnect: true,
-            query: { clientVersion: '1.0.2', origin: window.location.hostname }
+            query: { 
+                clientVersion: '1.0.3', 
+                origin: window.location.hostname,
+                timestamp: Date.now() // Add timestamp to prevent caching issues
+            }
         });
 
-        console.log("Socket.io instance created, waiting for events...");
+        console.log("Socket.io instance created:", socket ? "success" : "failed");
         
-        // Set connection timeout - server must respond within 15 seconds
+        // Set connection timeout - server must respond within 20 seconds
         connectionTimeout = setTimeout(() => {
             if (!isConnectedToServer) {
-                console.error("Connection timed out after 15 seconds");
-                showConnectionError("Connection timed out");
+                console.error("Connection timed out after 20 seconds");
+                showConnectionError("Connection timed out - server may be down");
             }
-        }, 15000);
-        
-        // Log all socket events for debugging
-        const events = [
-            'connect', 'disconnect', 'connect_error', 'connect_timeout',
-            'error', 'reconnect', 'reconnect_attempt', 'reconnect_error', 'reconnect_failed'
-        ];
-        
-        events.forEach(event => {
-            socket.on(event, (...args) => {
-                console.log(`Socket event [${event}]:`, args);
-            });
-        });
+        }, 20000);
         
         // Connection established
         socket.on('connect', () => {
@@ -570,6 +562,7 @@ function connectToServer() {
             isOfflineMode = false;
             offlineMode = false;
             
+            // Update connection indicator
             if (connectionIndicator) {
                 connectionIndicator.className = 'online';
                 connectionIndicator.innerHTML = '<i class="fas fa-wifi"></i> Online Mode';
@@ -599,7 +592,7 @@ function connectToServer() {
         // Connection error
         socket.on('connect_error', (error) => {
             console.error("❌ CONNECTION ERROR:", error);
-            showConnectionError(error.message);
+            showConnectionError("Connection error: " + error.message);
         });
         
         // Handle other events
@@ -607,7 +600,7 @@ function connectToServer() {
         
     } catch (error) {
         console.error("❌ CRITICAL CONNECTION ERROR:", error);
-        showConnectionError(error.message);
+        showConnectionError("Critical error: " + error.message);
     }
 }
 
@@ -750,6 +743,109 @@ function handleConnectionFailure(reason) {
     if (loadingScreen) loadingScreen.style.display = 'none';
 }
 
+// Function to generate food for offline mode
+function generateOfflineFood() {
+    // Generate random position within world bounds
+    const x = (Math.random() * 2 - 1) * worldSize * 0.4; // 40% of world size for better visibility
+    const y = (Math.random() * 2 - 1) * worldSize * 0.4;
+    
+    // Generate random color
+    const color = '#' + Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0');
+    
+    // Create food data
+    const foodId = 'offline-food-' + Math.random().toString(36).substring(2, 9);
+    const foodData = {
+        id: foodId,
+        x: x,
+        y: y,
+        size: FOOD_SIZE * 2, // Make food larger in offline mode for better visibility
+        color: color
+    };
+    
+    // Create the food mesh and add it to the scene
+    createFood(foodData);
+    
+    return foodData;
+}
+
+// Create a food item in the scene
+function createFood(foodData) {
+    // Create geometry and material for food
+    const foodGeometry = new THREE.SphereGeometry(foodData.size || FOOD_SIZE, 16, 16);
+    
+    // Check if color is provided, otherwise use a default
+    let foodColor = foodData.color || '#ffffff';
+    if (foodColor.charAt(0) !== '#') {
+        foodColor = '#' + foodColor;
+    }
+    
+    // Add some glow to food
+    const foodMaterial = new THREE.MeshBasicMaterial({ 
+        color: new THREE.Color(foodColor),
+        transparent: true,
+        opacity: 0.9
+    });
+    
+    // Create mesh
+    const foodMesh = new THREE.Mesh(foodGeometry, foodMaterial);
+    foodMesh.position.set(foodData.x, foodData.y, 0);
+    
+    // Add a small random animation offset for each food
+    foodMesh.userData.animationOffset = Math.random() * Math.PI * 2;
+    
+    // Add pulsing glow effect
+    const glowGeometry = new THREE.SphereGeometry(foodData.size * 1.5 || FOOD_SIZE * 1.5, 16, 16);
+    const glowMaterial = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(foodColor),
+        transparent: true,
+        opacity: 0.3,
+        side: THREE.BackSide
+    });
+    const glowMesh = new THREE.Mesh(glowGeometry, glowMaterial);
+    foodMesh.add(glowMesh);
+    
+    // Add to scene
+    scene.add(foodMesh);
+    
+    // Store food data
+    const food = {
+        id: foodData.id,
+        x: foodData.x,
+        y: foodData.y,
+        size: foodData.size || FOOD_SIZE,
+        color: foodColor,
+        mesh: foodMesh,
+        glow: glowMesh
+    };
+    
+    // Add to food items array
+    foodItems.push(food);
+    
+    return food;
+}
+
+// Clear all food and regenerate for offline mode
+function clearAndRegenerateFood(count) {
+    console.log(`Clearing all food and regenerating ${count} items`);
+    
+    // Remove all existing food
+    for (let i = foodItems.length - 1; i >= 0; i--) {
+        if (foodItems[i] && foodItems[i].mesh) {
+            scene.remove(foodItems[i].mesh);
+        }
+    }
+    
+    // Clear the array
+    foodItems = [];
+    
+    // Generate new food
+    for (let i = 0; i < count; i++) {
+        generateOfflineFood();
+    }
+    
+    console.log(`Generated ${foodItems.length} food items for offline mode`);
+}
+
 // Enable offline mode with a fallback experience
 function enableOfflineMode(reason) {
     console.log(`Enabling offline mode: ${reason}`);
@@ -760,31 +856,8 @@ function enableOfflineMode(reason) {
     isConnectedToServer = false;
     
     // Generate offline food immediately
-    const foodCount = 300; // Increased food count for better experience
-    console.log(`Generating ${foodCount} food items for offline mode`);
-    
-    // Clear any existing food first
-    for (let i = 0; i < foodItems.length; i++) {
-        if (foodItems[i] && foodItems[i].mesh) {
-            scene.remove(foodItems[i].mesh);
-        }
-    }
-    foodItems = [];
-    
-    // Generate new food for the offline experience
-    for (let i = 0; i < foodCount; i++) {
-        const foodId = 'offline-food-' + i;
-        const x = (Math.random() * 2 - 1) * worldSize / 2;
-        const y = (Math.random() * 2 - 1) * worldSize / 2;
-        const food = {
-            id: foodId,
-            x: x,
-            y: y,
-            size: FOOD_SIZE,
-            color: '#' + Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0')
-        };
-        createFood(food);
-    }
+    const foodCount = 200; // Reduced count but larger food items
+    clearAndRegenerateFood(foodCount);
     
     // Update connection indicator
     const connectionIndicator = document.getElementById('connection-indicator');
@@ -1515,69 +1588,6 @@ function removeOtherPlayer(id) {
     delete otherPlayers[id];
 }
 
-// Create food item with improved visuals
-function createFood(foodData) {
-    // Check if food already exists
-    if (foodItems.some(food => food.id === foodData.id)) return;
-    
-    // Ensure valid hex color
-    let foodColor;
-    if (foodData.color && typeof foodData.color === 'string' && foodData.color.startsWith('#')) {
-        // If it's already a string hex color, use it
-        foodColor = foodData.color;
-    } else {
-        // Otherwise generate a valid hex color
-        const randomColor = Math.floor(Math.random() * 0xffffff);
-        foodColor = '#' + randomColor.toString(16).padStart(6, '0');
-    }
-    
-    // Main food orb
-    const foodGeometry = new THREE.CircleGeometry(FOOD_SIZE, 16);
-    const foodMaterial = new THREE.MeshBasicMaterial({ 
-        color: foodColor,
-        transparent: true,
-        opacity: 0.9
-    });
-    const food = new THREE.Mesh(foodGeometry, foodMaterial);
-    
-    // Glow effect around food
-    const glowGeometry = new THREE.CircleGeometry(FOOD_SIZE * 1.8, 16);
-    const glowMaterial = new THREE.MeshBasicMaterial({
-        color: foodColor,
-        transparent: true,
-        opacity: 0.4
-    });
-    const glow = new THREE.Mesh(glowGeometry, glowMaterial);
-    glow.position.z = -2;
-    food.add(glow);
-    
-    // Add inner detail to food
-    const innerGeometry = new THREE.CircleGeometry(FOOD_SIZE * 0.5, 16);
-    const innerMaterial = new THREE.MeshBasicMaterial({
-        color: 0xffffff,
-        transparent: true,
-        opacity: 0.5
-    });
-    const inner = new THREE.Mesh(innerGeometry, innerMaterial);
-    inner.position.z = 0.5;
-    food.add(inner);
-    
-    food.position.set(foodData.x, foodData.y, 0);
-    scene.add(food);
-    
-    foodItems.push({
-        id: foodData.id,
-        mesh: food,
-        glow: glow,
-        inner: inner,
-        x: foodData.x,
-        y: foodData.y,
-        scale: 1,
-        scaleDir: -0.01, // For pulsing animation
-        originalColor: foodColor
-    });
-}
-
 // Update food items
 function updateFood(foodData) {
     // Remove all current food
@@ -2156,4 +2166,21 @@ function updatePlayer(deltaTime) {
 }
 
 // Initialize the game when page loads
-window.addEventListener('load', init); 
+window.addEventListener('load', init);
+
+// At the beginning of the file - after existing variables
+// Initialize the game once when DOM is ready
+window.addEventListener('DOMContentLoaded', function() {
+    console.log('DOM content loaded, initializing game...');
+    
+    // Initialize game if not already initialized
+    if (!window.gameInitialized) {
+        init();
+        window.gameInitialized = true;
+        
+        // Try to connect to the server immediately
+        setTimeout(function() {
+            connectToServer();
+        }, 500);
+    }
+}); 

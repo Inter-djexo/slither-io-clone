@@ -65,92 +65,18 @@
     
     <!-- Libraries - Using specific Socket.IO version for compatibility -->
     <script src="libs/three.min.js"></script>
-    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js" integrity="sha384-7EyYLQZgWBi67fBtVxw60/OWl1kjsfrPFcaU0pp0nAh+i8FD068QogUvg85Ewy1k" crossorigin="anonymous"></script>
+    <script src="https://cdn.socket.io/4.4.1/socket.io.min.js"></script>
+    
+    <!-- Force connection to the multiplayer server -->
+    <script>
+        // This ensures we connect to the live server regardless of host
+        window.SERVER_URL = 'https://slither-io-clone.onrender.com';
+        
+        // Add debug console output
+        console.log("Starting game with server URL:", window.SERVER_URL);
+    </script>
     
     <!-- Game scripts -->
     <script src="js/game.js"></script>
-    
-    <!-- Initialize game after page loads -->
-    <script>
-        // Single initialization flag
-        let gameInitialized = false;
-        
-        // Function to check if Socket.IO is properly loaded
-        function checkSocketIO() {
-            if (typeof io === 'undefined') {
-                console.error("Socket.IO failed to load properly");
-                return false;
-            }
-            console.log("Socket.IO loaded successfully");
-            return true;
-        }
-        
-        // Start offline mode with explanation
-        function startOfflineModeWithNotice(reason) {
-            console.log("Starting offline mode:", reason);
-            
-            const loadingScreen = document.getElementById('loading-screen');
-            if (loadingScreen) loadingScreen.style.display = 'none';
-            
-            // Update indicator if it exists
-            const connectionIndicator = document.getElementById('connection-indicator');
-            if (connectionIndicator) {
-                connectionIndicator.className = 'offline';
-                connectionIndicator.innerHTML = '<i class="fas fa-wifi-slash"></i> Offline Mode';
-            }
-            
-            // Update connection message
-            const connectionMessage = document.querySelector('.connection-message');
-            if (connectionMessage) {
-                connectionMessage.innerHTML = "You're playing in offline mode. To play multiplayer with other players, visit <a href='https://slither-io-clone.onrender.com' target='_blank'>the multiplayer server</a> directly.";
-            }
-            
-            // Initialize game if function exists and game not yet initialized
-            if (typeof init === 'function' && !gameInitialized) {
-                init();
-                gameInitialized = true;
-                
-                // If enableOfflineMode exists, call it after init
-                if (typeof enableOfflineMode === 'function') {
-                    setTimeout(() => {
-                        enableOfflineMode(reason);
-                    }, 1000);
-                }
-            }
-        }
-        
-        // Immediate check for offline mode to avoid spinner getting stuck
-        window.addEventListener('DOMContentLoaded', function() {
-            // Verify Socket.IO is available
-            if (!checkSocketIO()) {
-                startOfflineModeWithNotice("Socket.IO library failed to load");
-                return;
-            }
-            
-            // Set a timeout for server connection
-            setTimeout(function() {
-                const loadingScreen = document.getElementById('loading-screen');
-                if (loadingScreen && loadingScreen.style.display !== 'none') {
-                    console.log("Server connection timed out, switching to offline mode");
-                    startOfflineModeWithNotice("Server connection timed out");
-                }
-            }, 6000);
-        });
-        
-        // Initialize only once when window loads
-        window.addEventListener('load', function() {
-            if (!gameInitialized) {
-                // Check Socket.IO again
-                if (!checkSocketIO()) {
-                    startOfflineModeWithNotice("Socket.IO library not available");
-                    return;
-                }
-                
-                // Initialize the game
-                init();
-                gameInitialized = true;
-            }
-        });
-    </script>
 </body>
 </html>
