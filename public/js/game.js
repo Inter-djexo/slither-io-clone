@@ -1284,6 +1284,32 @@ function enableOfflineMode(reason) {
         loadingScreen.style.display = 'none';
     }
     
+    // Ensure THREE.js is initialized
+    if (typeof THREE === 'undefined') {
+        console.error("THREE.js not available for offline mode");
+        
+        // Show a message to inform the user
+        const message = document.createElement('div');
+        message.style.position = 'fixed';
+        message.style.top = '50%';
+        message.style.left = '50%';
+        message.style.transform = 'translate(-50%, -50%)';
+        message.style.background = 'rgba(0, 0, 0, 0.8)';
+        message.style.color = 'white';
+        message.style.padding = '20px';
+        message.style.borderRadius = '10px';
+        message.style.zIndex = '1000';
+        message.innerHTML = '<h2>Game Libraries Not Loaded</h2><p>We couldn\'t load the necessary game libraries. Please refresh the page and try again.</p>';
+        document.body.appendChild(message);
+        return;
+    }
+    
+    // Initialize THREE.js if scene is not set up yet
+    if (!scene) {
+        console.log("Initializing THREE.js for offline mode");
+        setupThreeJS();
+    }
+    
     // Check if player already exists, if not create one
     if (!player.segments || player.segments.length === 0) {
         console.log("Creating player for offline mode");
@@ -2618,16 +2644,58 @@ function init() {
         // Check if THREE is available
         if (typeof THREE === 'undefined') {
             console.error("THREE.js is not loaded! Waiting for fallback to load...");
+            
+            // Add a loading indicator if we're waiting for THREE.js
+            const loadingMessage = document.createElement('div');
+            loadingMessage.id = 'three-loading-message';
+            loadingMessage.style.position = 'fixed';
+            loadingMessage.style.top = '40%';
+            loadingMessage.style.left = '50%';
+            loadingMessage.style.transform = 'translate(-50%, -50%)';
+            loadingMessage.style.color = '#00ff00';
+            loadingMessage.style.fontFamily = 'Arial, sans-serif';
+            loadingMessage.style.fontSize = '16px';
+            loadingMessage.style.textAlign = 'center';
+            loadingMessage.innerHTML = 'Loading game libraries...<br>Please wait a moment.';
+            document.body.appendChild(loadingMessage);
+            
+            // Setup a retry mechanism
+            setTimeout(() => {
+                if (typeof THREE === 'undefined') {
+                    console.log("Still waiting for THREE.js to load, using alternate CDN...");
+                    
+                    // Try an alternative CDN
+                    const alternateScript = document.createElement('script');
+                    alternateScript.src = 'https://unpkg.com/three@0.128.0/build/three.min.js';
+                    alternateScript.onload = () => {
+                        console.log("Alternate THREE.js loaded successfully!");
+                        
+                        // Remove loading message
+                        const msg = document.getElementById('three-loading-message');
+                        if (msg) msg.remove();
+                        
+                        // Initialize game after a short delay
+                        setTimeout(init, 200);
+                    };
+                    document.head.appendChild(alternateScript);
+                }
+            }, 5000);
+            
             // The fallback script will call init() again after loading
             return;
         }
         
-        // Set up Three.js
-        setupThreeJS();
+        // Clean up any loading message
+        const loadingMsg = document.getElementById('three-loading-message');
+        if (loadingMsg) loadingMsg.remove();
         
-        // Apply performance optimizations
-        if (typeof optimizeRendering === 'function') {
-            optimizeRendering();
+        // Set up Three.js
+        const threeJsInitialized = setupThreeJS();
+        
+        if (!threeJsInitialized) {
+            console.error("Failed to initialize THREE.js");
+            alert("Failed to initialize the game graphics. Please refresh the page and try again.");
+            return;
         }
         
         // Initialize minimap
@@ -2651,3 +2719,77 @@ function init() {
         alert("Error initializing game: " + error.message + "\n\nPlease try refreshing the page.");
     }
 } 
+
+// Add these functions before the init function
+
+// Set up Three.js environment
+function setupThreeJS() {
+    console.log("Setting up THREE.js...");
+    
+    // Create scene
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x050510);
+    
+    // Create camera
+    const aspectRatio = window.innerWidth / window.innerHeight;
+    const viewSize = 1200;
+    camera = new THREE.OrthographicCamera(
+        -viewSize * aspectRatio / 2,
+        viewSize * aspectRatio / 2,
+        viewSize / 2,
+        -viewSize / 2,
+        1,
+        10000
+    );
+    camera.position.z = 1000;
+    
+    // Create renderer
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    
+    // Add to container
+    const gameContainer = document.getElementById('game-container');
+    gameContainer.appendChild(renderer.domElement);
+    
+    // Add grid
+    addWorldGrid();
+    
+    // Handle resize
+    window.addEventListener('resize', () => {
+        const aspectRatio = window.innerWidth / window.innerHeight;
+        camera.left = -viewSize * aspectRatio / 2;
+        camera.right = viewSize * aspectRatio / 2;
+        camera.top = viewSize / 2;
+        camera.bottom = -viewSize / 2;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+    
+    return true;
+}
+
+// Add world grid
+function addWorldGrid() {
+    // Create grid
+    gridHelper = new THREE.GridHelper(worldSize, 20);
+    gridHelper.rotation.x = Math.PI / 2;
+    gridHelper.material.opacity = 0.2;
+    gridHelper.material.transparent = true;
+    scene.add(gridHelper);
+    
+    // Create world boundary
+    const boundaryGeometry = new THREE.RingGeometry(worldSize / 2 - 10, worldSize / 2, 64);
+    const boundaryMaterial = new THREE.MeshBasicMaterial({
+        color: 0xff0000,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.5
+    });
+    
+    const boundary = new THREE.Mesh(boundaryGeometry, boundaryMaterial);
+    boundary.rotation.x = Math.PI / 2;
+    scene.add(boundary);
+    
+    // Store in gameObjects
+    gameObjects.boundary = boundary;
+}
